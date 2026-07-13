@@ -1,0 +1,6 @@
+[submodule "extern/uwp-xray-depot"]
+	path = extern/uwp-xray-depot
+	url = https://github.com/marcelofrau/uwp-xray-depot
+[submodule "extern/scummvm"]
+	path = extern/scummvm
+	url = https://github.com/scummvm/scummvm
