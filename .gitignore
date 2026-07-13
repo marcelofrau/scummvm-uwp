@@ -1,0 +1,82 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+ARM64/
+Win32/
+[Bb]in/
+[Oo]bj/
+*.exe
+*.pdb
+*.dll
+*.lib
+*.exp
+*.ilk
+
+# VS cache files
+*.ipch
+*.db
+*.db-journal
+*.db-wal
+Browse.VC.*
+ipch/
+
+# Packed AppX
+*.appx
+*.appxbundle
+*.msix
+*.msixbundle
+
+# Generated files
+Generated Files/
+*.cso
+*.winmd
+*.pri
+*.appxrecipe
+vs.appxrecipe
+
+# Private keys / certs (never commit)
+*.pfx
+*.pvk
+*.cer
+
+# App packages (build output)
+AppPackages/
+
+# Env (local credentials)
+.env
+
+# NuGet
+packages/
+*.nupkg
+
+# Personal AI tooling config (user-specific)
+.claude/
+.codex/
+
+# OpenCode dependencies
+.opencode/node_modules/
+
+# Build output (CMake)
+build/
+
+# Run output
+.run-output/
+
+# Release distributable output
+distribute/
+scummvm-uwp_*_x64.zip
+
+# ScummVM libretro core build artifacts (built via ScummVM Makefile)
+scummvm_libretro.dll
+scummvm.zip
+
+session.txt
