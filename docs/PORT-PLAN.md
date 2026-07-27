@@ -1,119 +1,155 @@
-# ScummVM UWP Port — Plan (Route A: libretro, dynamic DLL)
+# ScummVM UWP Port — Plan (Route C: RetroArch UWP + bundled core)
 
-Status: **active**. Author: Marcelo Frau. Last updated: 2026-07-13.
+Status: **active**. Author: Marcelo Frau. Last updated: 2026-07-27.
 
-This document is the source of truth for the ScummVM UWP port. The older
-`dosbox-pure-uwp/docs/` may be stale — code + git history win.
+This document is the source of truth for the ScummVM UWP port.
 
 ## 1. Goal
 
 Ship a Universal Windows Platform (UWP / Xbox) app that runs ScummVM games,
-reusing the working app shell from `dosbox-pure-uwp` and the **in-tree,
-maintained** ScummVM `backends/platform/libretro` core.
+**reusing RetroArch UWP as the frontend** and bundling the ScummVM libretro
+core as a DLL inside the appx package.
 
-## 2. Core strategy (why this route)
+## 2. Core strategy
 
-- ScummVM upstream **removed** its old WinRT/UWP backend from mainline.
-- The libretro backend is **in-tree and maintained**, and — critically — its
-  Makefile already ships a `windows_msvc2017_uwp` platform target:
+### Why RetroArch UWP as base
 
-  ```
-  else ifneq (,$(findstring uwp,$(PlatformSuffix)))
-     WinPartition = uwp
-     MSVC2017CompileFlags = -DWINAPI_FAMILY=WINAPI_FAMILY_APP -D_WINDLL \
-        -D_UNICODE -DUNICODE -D__WRL_NO_DEFAULT_LIB__ -EHsc -FS
-     LDFLAGS += -APPCONTAINER -NXCOMPAT -DYNAMICBASE -MANIFEST:NO -LTCG \
-        -OPT:REF -SUBSYSTEM:CONSOLE -MANIFESTUAC:NO -OPT:ICF -WINMD:NO
-     LIBS += WindowsApp.lib
-  ```
+Previous approach (custom shell from dosbox-uwp scaffold) required reimplementing
+rendering, audio, input, pacing, and video sync — all things RetroArch already
+does correctly on UWP/Xbox. The ScummVM libretro core already has its own full
+GUI launcher (game list, settings, browser) that renders into the libretro video
+output buffer. This means:
 
-  → compiles with `cl.exe`/`link.exe`, `WINAPI_FAMILY_APP`, `-APPCONTAINER`,
-  links only `WindowsApp.lib`. Produces `scummvm_libretro.dll` as a UWP
-  AppContainer DLL. Build invocation:
-  `make platform=windows_msvc2017_uwp_x64`.
+- **RetroArch** handles: D3D rendering, XAudio2, gamepad/keyboard/mouse input,
+  core loading (`LoadPackagedLibrary`), frame pacing, vsync, settings UI.
+- **ScummVM core** handles: game detection, its own GUI launcher, in-game
+  rendering, audio mixing, input mapping, save/load.
+- **We handle**: app packaging, file picker integration for UWP sandbox, and
+  bootstrapping RetroArch to auto-load the ScummVM core.
 
-**Decision:** do NOT hand-port ScummVM's 200+ source files into a `.vcxproj`
-(the dosbox model). Instead let ScummVM's own build system produce the core,
-and integrate it into the reused dosbox-uwp app shell.
+### Key architectural insight
 
-**Integration decision:** dynamic DLL. App loads `scummvm_libretro.dll` via
-`LoadPackagedLibrary` + `GetProcAddress` (AppContainer requires
-`LoadPackagedLibrary`, not `LoadLibrary`). This isolates the huge ScummVM build
-from the app and keeps the core update-friendly.
+When ScummVM's libretro core starts with no game content:
+1. `retro_load_game(NULL)` is called
+2. Core runs `scummvm_main("scummvm")`
+3. No active domain → `launcherDialog()` fires
+4. **ScummVM's full built-in GUI renders** (game list, options, browser)
+5. RetroArch just displays the video frames — it's a dumb renderer
 
-**SDL:** NOT needed by the core. libretro UWP `LIBS` = `WindowsApp.lib` only;
-the backend implements `OSystem` on the libretro API. SDL (`uwp-dep`) only
-matters if the *frontend* wants gamepad input via `SdlInput.cpp` — deferred.
+This means the ScummVM GUI works end-to-end without any custom bridge code.
 
-## 3. Reused scaffold (from dosbox-pure-uwp/dosbox-uwp)
+### Build strategy for the core DLL
 
-| Component | File(s) | Verdict |
+The ScummVM libretro core is built separately via its own Makefile:
+
+```
+make platform=windows_msvc2017_uwp_x64 \
+  VsInstallRoot="C:/Program Files/Microsoft Visual Studio/2022/<Edition>" \
+  WindowsSDKVersion="10.0.XXXXX.0" \
+  LITE=1 NO_WIP=1 USE_CURL=0
+```
+
+- Requires MSYS2/cygwin (Makefile uses unix shell + `cygpath`)
+- Requires VS2022 Build Tools (cl.exe + link.exe + Windows SDK)
+- `VsInstallRoot` and `WindowsSDKVersion` are overridable via `?=` in Makefile
+- Output: `scummvm_libretro.dll` (AppContainer DLL, links only `WindowsApp.lib`)
+
+Alternative: use a **pre-built DLL** from CI or a release, skipping local build
+entirely. Risk: must confirm CI builds with UWP target to avoid forbidden APIs.
+
+### No custom rendering/audio/input needed
+
+The old plan required custom code for:
+- ~~Video rendering (Direct2D)~~ → RetroArch handles D3D11
+- ~~Audio sink (XAudio2)~~ → RetroArch handles XAudio2
+- ~~Input bridge (VK→RETROK)~~ → RetroArch handles gamepad/keyboard
+- ~~Frame pacing (QPC loop)~~ → RetroArch handles vsync/pacing
+- ~~Pixel format negotiation~~ → RetroArch + core negotiate automatically
+- ~~VFS UWP implementation~~ → ScummVM core uses WindowsFilesystemFactory
+
+## 3. What we build
+
+| Component | Source | Notes |
 |---|---|---|
-| libretro bridge | `Content/RetroCore.cpp/.h` | GENERIC — strip ~4 dosbox option keys + DBPS ToggleOSD; switch static symbols → pointer table |
-| audio sink | `Content/XAudio2Output.cpp/.h` | GENERIC — parameterize 44100 → sample_rate |
-| video renderer | `Content/RetroScreenRenderer.cpp/.h` (Direct2D) | GENERIC — add RGB565 path or force XRGB8888 |
-| swapchain | `Common/DeviceResources.cpp/.h`, `StepTimer.h`, `DirectXHelper.h` | GENERIC drop-in |
-| app shell | `App.cpp/.h`, `dosbox_uwpMain.cpp/.h` | GENERIC — replace dosbox self-pacing with real QPC pacing |
-| input | `Content/SdlInput.cpp/.h` + main VK→RETROK map | GENERIC bridge, rebind maps |
-| VFS (sandbox) | `extern/.../vfs_implementation_uwp.cpp` | GENERIC drop-in |
-| `.vcxproj` core wiring | `dosbox-uwp.vcxproj` | DOSBOX-SPECIFIC — replaced by dynamic DLL load |
-| `dosbox_pure_sta.cpp` | — | DOSBOX-SPECIFIC — delete |
+| RetroArch UWP binary | RetroArch release/CI build | Frontend — handles all rendering, audio, input |
+| scummvm_libretro.dll | ScummVM Makefile `platform=windows_msvc2017_uwp_x64` | Core — bundled in appx |
+| scummvm.zip | ScummVM `make datafiles` | Themes + datafiles, version-matched to core |
+| App bootstrap | New minimal UWP app | Launches RetroArch core, custom file picker |
+| retroarch.cfg | Config file | Auto-load ScummVM core, skip RetroArch menu |
+
+### Appx package structure
+
+```
+scummvm-uwp.appx
+├── scummvm-uwp.exe          # Bootstrap app (or RetroArch.exe itself)
+├── RetroArch-msvc*.dll      # RetroArch runtime (if not merged into exe)
+├── cores/
+│   └── scummvm_libretro.dll # Bundled core
+├── scummvm.zip              # Themes + datafiles
+├── retroarch.cfg            # Pre-configured to auto-load core
+└── Assets/                  # Icons, splash, etc.
+```
 
 ## 4. Phases
 
-### Phase 0 — Repo scaffold
-- `scummvm-uwp/` new repo. Copy reusable shell from `dosbox-uwp/`.
-- Submodules: `extern/scummvm` (upstream), `extern/uwp-xray-depot` (diagnostics).
-  `uwp-dep` (SDL2) deferred.
-- Git identity local = personal gmail (`Marcelo Frau <marcelofrau@gmail.com>`).
-  NEVER `--global`.
+### Phase 0 — Repo scaffold (DONE)
+- `scummvm-uwp/` repo. Submodules: `extern/scummvm`, `extern/uwp-xray-depot`.
+- Current shell from dosbox-uwp is legacy — will be replaced by RetroArch base.
 
-### Phase 1 — Build the core DLL (highest risk, isolated) — **LITE=1 NO_WIP=1, SCUMM + SKY only**
-- `make platform=windows_msvc2017_uwp_x64` under MSYS2/cygwin (Makefile needs a
-  unix shell + `cygpath`).
-- Override VS2017 → 2022 (`VsInstallRoot`, `WindowsSDKVersion`).
-- Disable non-essential libs to shrink forbidden-API surface: `USE_CURL=0`,
-  minimize `USE_VORBIS/MAD/MT32EMU`.
-- Resolve engine-table generation (`detection_table.h`, `plugins_table.h`,
-  `engines.mk`).
-- **Output:** `scummvm_libretro.dll` that loads in AppContainer, plus
-  `scummvm.zip` (datafiles + themes, version-matched).
+### Phase 1 — Build the core DLL
+- `make platform=windows_msvc2017_uwp_x64` under MSYS2/cygwin.
+- Override VS2017 → VS2022 (`VsInstallRoot`, `WindowsSDKVersion`).
+- Start with `LITE=1 NO_WIP=1 USE_CURL=0`, engines SCUMM + SKY only.
+- Verify DLL loads in AppContainer (no forbidden Win32 APIs).
+- **Output:** `scummvm_libretro.dll` + `scummvm.zip`.
 
-### Phase 2 — Dynamic integration
-- RetroCore: replace direct libretro symbols with a **function-pointer table**
-  populated via `LoadPackagedLibrary("scummvm_libretro.dll")` + `GetProcAddress`
-  (`retro_init/run/load_game/set_*_callback/get_system_av_info`, ...).
-- Package the DLL inside the appx.
+### Phase 2 — RetroArch UWP integration
+- Obtain RetroArch UWP build (binary release or build from source).
+- Create appx package with RetroArch + scummvm core + config.
+- Configure `retroarch.cfg`: set `libretro = "cores/scummvm_libretro.dll"`,
+  `libretro_content = ""` (empty = launch core without content → ScummVM GUI).
+- Verify: app launches → ScummVM launcher GUI appears → game list works.
 
-### Phase 3 — Adapt scaffold
-- XAudio2Output: parameterize sample rate (ScummVM default 48000).
-- RetroScreenRenderer: RGB565 path OR force core to XRGB8888 via
-  `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT`.
-- Main loop: add **QPC pacing** — ScummVM does NOT self-pace (dosbox used
-  `CPU_CycleMax`). Honor ScummVM "Frame rate cap" option.
-- RetroCore: strip dosbox option keys; delete `dosbox_pure_sta.cpp`.
-- VFS: drop-in; ScummVM uses multi-file games → relies on `opendir`/path side
-  more than the in-memory `romData` blob.
-- Input: rebind key/button maps for ScummVM controls.
+### Phase 3 — File picker + UWP sandbox
+- ScummVM's built-in browser uses `WindowsFilesystemFactory` on Windows.
+- On UWP, game files must be in app-accessible locations (LocalFolder, or
+  user-picked via `Windows::Storage::Pickers::FolderPicker`).
+- Implement a thin UWP file picker bridge: user picks game folder → files
+  copied/mapped to LocalFolder → ScummVM detects them via Mass Add or
+  manual addition in its GUI.
+- Test: pick a SCUMM game folder → appears in ScummVM launcher → runs.
 
-### Phase 4 — Audio
-- Reuse DRC plan from `dosbox-pure-uwp/docs/audio-fix/` (same XAudio2 sink).
-  ScummVM's continuous stream is DRC-friendly.
+### Phase 4 — Xbox-specific adaptations
+- Xbox has restricted filesystem — all games must come through file picker
+  or be pre-packaged in appx.
+- Controller mapping: ScummVM core already maps RetroPad buttons, but
+  ScummVM's GUI needs mouse emulation (right stick → mouse pointer).
+- Test on Xbox Dev Mode.
 
-### Phase 5 — Validation
-- xray binds (`audio_queued/produced/consumed`). PASS = SCUMM/SKY runs, zero
-  underruns, no pitch shift, no pinned CPU core.
+### Phase 5 — Validation + packaging
+- SCUMM + SKY engines run correctly.
+- Audio: no underruns, correct sample rate, no pitch shift.
+- Video: correct resolution, vsync, no tearing.
+- Input: gamepad works in-game, GUI navigation works.
+- Package as .appx/.appxbundle for sideloading or store.
 
-## 5. Ranked risks
-1. **3rd-party libs in AppContainer** — vorbis/mad/mt32emu/curl may call
-   forbidden APIs. Mitigate: `USE_CURL=0`, disable non-essential `USE_*`.
-2. **Engine-table generation** outside `./configure` may break under MSVC.
-3. **Makefile hardcodes VS2017** — override for current toolchain.
-4. **Pacing** — ScummVM needs its own timing loop (dosbox didn't).
+## 5. Risks
+
+1. **RetroArch UWP binary availability** — need to confirm a UWP build exists
+   or build from source. RetroArch's own UWP port may lag behind mainline.
+2. **3rd-party libs in AppContainer** — vorbis/mad/mt32emu may call forbidden
+   APIs. Mitigate: `USE_CURL=0`, disable non-essential `USE_*` at build time.
+3. **Engine-table generation** outside `./configure` may break under MSVC.
+4. **Makefile hardcodes VS2017** — override via `VsInstallRoot ?=` on cmdline.
+5. **UWP file sandbox** — games must be accessible. User picks folders via
+   `FolderPicker`, files copied to LocalFolder.
+6. **Xbox restrictions** — tighter sandbox, no arbitrary filesystem access.
 
 ## 6. Decisions log
-- Route A (libretro) over Route B (SDL native OSystem_WinRT): libretro backend
-  is in-tree/maintained; heavy work (build ScummVM tree in MSVC-UWP
-  AppContainer) is common to both; Route B additionally needs a new backend.
-- Dynamic DLL over static lib / vcxproj source list.
-- First target: SCUMM + SKY (proof-of-pipeline), LITE, NO_WIP.
+
+- **2026-07-13**: Route A (libretro) over Route B (SDL native OSystem_WinRT).
+  Dynamic DLL over static lib. First engines: SCUMM + SKY.
+- **2026-07-27**: **Route C (RetroArch UWP as base)** over Route A (custom shell).
+  RetroArch already handles rendering, audio, input, pacing correctly on UWP.
+  ScummVM core has its own GUI launcher. No need to reimplement bridge code.
+  Only custom work: file picker + UWP sandbox integration + bootstrap config.
