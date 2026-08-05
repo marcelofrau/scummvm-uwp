@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap mp rescap">
+
+  <Identity
+    Name="148433a7-fd05-4815-9e57-fa81cb66d285"
+    Publisher="CN=Marcelo Frau"
+    Version="2.0.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="148433a7-fd05-4815-9e57-fa81cb66d285" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>ScummVM</DisplayName>
+    <PublisherDisplayName>Marcelo Frau</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.15063.0" MaxVersionTested="10.0.26100.0" />
+    <PackageDependency Name="Microsoft.VCLibs.140.00" MinVersion="14.0.33519.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"/>
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+    <Resource uap:Scale="200"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="ScummVMLauncher.exe"
+      EntryPoint="ScummVMLauncher.App">
+        <uap:VisualElements
+          DisplayName="ScummVM"
+          Square150x150Logo="Assets\Square150x150Logo.png"
+          Square44x44Logo="Assets\Square44x44Logo.png"
+          Description="ScummVM no Xbox Series."
+          BackgroundColor="transparent">
+          <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
+                           Square71x71Logo="Assets\Square71x71Logo.png"
+                           Square310x310Logo="Assets\Square310x310Logo.png" />
+          <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#0F1115" />
+          <uap:LockScreen Notification="badge" BadgeLogo="Assets\LockScreenLogo.png" />
+        </uap:VisualElements>
+        <Extensions>
+          <uap:Extension Category="windows.protocol">
+            <uap:Protocol Name="scummvm-launcher" />
+          </uap:Extension>
+        </Extensions>
+    </Application>
+    <Application Id="RetroArch"
+      Executable="RetroArch-msvcUWP.exe"
+      EntryPoint="RetroArch.App">
+        <uap:VisualElements
+          DisplayName="RetroArch ScummVM"
+          Square150x150Logo="Assets\Square150x150Logo.png"
+          Square44x44Logo="Assets\Square44x44Logo.png"
+          Description="RetroArch frontend com ScummVM."
+          BackgroundColor="transparent"
+          AppListEntry="none" />
+        <Extensions>
+          <uap:Extension Category="windows.protocol">
+            <uap:Protocol Name="retroarch">
+              <uap:DisplayName>retroarch</uap:DisplayName>
+            </uap:Protocol>
+          </uap:Extension>
+        </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="broadFileSystemAccess" />
+    <rescap:Capability Name="expandedResources" />
+  </Capabilities>
+</Package>

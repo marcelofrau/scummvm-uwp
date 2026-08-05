@@ -1,54 +1,52 @@
 # HANDOFF — ScummVM UWP port
 
-Last updated: 2026-07-27. For the next agent/session. Read this + `PORT-PLAN.md`
-first. Conversation language: Portuguese. Docs: English.
+Last updated: 2026-08-05. For the next agent/session. Read this +
+`PORT-PLAN.md` + `FILESYSTEM.md` first. Conversation language: Portuguese.
+Docs: English.
 
 ## Where we are
 
-**Phase 0 (repo scaffold) = DONE and committed.** Phase 1 next.
+**Phase 0 (repo restructure) = in progress.** Phase 1 next.
 
-### Strategy change (2026-07-27)
+### Strategy (final, 2026-08-05)
 
-**Route C: RetroArch UWP as base + bundled scummvm core.**
+**Route C refined: RetroArch UWP shell (compiled from source) + bundled
+ScummVM libretro core.**
 
-Previous Route A (custom shell from dosbox-uwp) was abandoned. RetroArch UWP
-already handles rendering, audio, input, pacing, core loading. ScummVM's
-libretro core has its own full GUI launcher. Only custom work needed:
-file picker for UWP sandbox + bootstrap config.
+- RetroArch UWP is the shell only — rendering, audio, input, pacing. **No custom
+  RetroArch code.**
+- All custom work lives **inside the ScummVM core** (built from
+  `extern/scummvm`): custom file picker, custom About, logging (spdlog).
+- Filesystem: ScummVM core's Win32 calls (`_wfopen`, `FindFirstFile`,
+  `GetFileAttributes`) are blocked in the UWP sandbox. Fix = **FromApp APIs**
+  (`api-ms-win-core-file-fromapp-l1-1-0.dll`, `<fileapifromapp.h>`). See
+  `docs/FILESYSTEM.md` for the full plan + proven reference implementations
+  (dosbox-pure-unleashed-uwp `fopen_wrap`, x-files `DirectoryScanner.cs`).
+- Manifest already has `broadFileSystemAccess` (fork); bump MinVersion to
+  17763.
 
-### Commits so far
-- `16d017a` chore: scaffold ScummVM UWP from dosbox-uwp shell
-- `fde0cfe` chore: add submodules extern/scummvm (shallow) + extern/uwp-xray-depot
+### Dependencies (submodules)
 
-### What exists on disk
-```
-scummvm-uwp/
-  .gitignore
-  scummvm-uwp.sln
-  docs/
-    PORT-PLAN.md             # source of truth (Route C as of 2026-07-27)
-    HANDOFF.md               # this file
-  extern/
-    scummvm/                 # submodule, upstream master, shallow depth=1
-    uwp-xray-depot/          # submodule, diagnostics
-    libretro-common/         # VENDORED: VFS uwp impl + headers
-  scummvm-uwp/               # app project (copied from dosbox-uwp shell)
-    App.cpp/.h
-    dosbox_uwpMain.cpp/.h    # LEGACY — will be replaced by RetroArch base
-    dosbox_pure_sta.cpp      # LEGACY — delete
-    scummvm-uwp.vcxproj      # LEGACY — rewrite for Route C
-    Content/                  # LEGACY bridge code — most files no longer needed
-    Common/                   # Generic D3D helpers — may be kept
-    Assets/                   # Still dosbox branding
-```
+| Path | Source | Status |
+|---|---|---|
+| `extern/scummvm` | ScummVM upstream master | KEPT — core build |
+| `extern/retroarch` | https://github.com/XboxEmulationHub/RetroArch.git | NEW — shell (local clone already at `C:\Users\marcelo\workspace\RetroArch`) |
+| `extern/spdlog` | https://github.com/gabime/spdlog (v1.17.0) | NEW — header-only logging |
+| `extern/uwp-xray-depot` | — | REMOVED (nested spdlog/json/lua unused) |
+| `extern/libretro-common` | — | REMOVED (vendored; core Makefile doesn't use it, RetroArch ships its own) |
 
-The dosbox-uwp scaffold files are LEGACY. Route C uses RetroArch UWP as the
-frontend, so most of the custom bridge code (RetroCore, RetroScreenRenderer,
-XAudio2Output, SdlInput) is no longer needed.
+### Reference projects (in user's workspace, do NOT move)
+
+- `C:\Users\marcelo\workspace\vs2022\dosbox-pure-unleashed-uwp` — working UWP
+  libretro shell + core FS patches (FromApp). The proven pattern.
+- `C:\Users\marcelo\workspace\x-files-uwp` — C# UWP file manager; FromApp
+  P/Invoke reference (`XFiles\FileSystem\DirectoryScanner.cs`, `XFiles\Log.cs`).
+- `C:\Users\marcelo\workspace\RetroArch` — local clone of the XboxEmulationHub
+  fork used for `extern/retroarch`.
+- `C:\Users\marcelo\workspace\vs2022\scummvm-uwp` — OLD repo, to be archived.
+  Do not use.
 
 ## NEXT STEP — Phase 1: build the core DLL
-
-Same as before — this step is unchanged from Route A.
 
 1. Need MSYS2/cygwin shell + `cygpath` + VS2022 Build Tools.
 2. From `extern/scummvm/backends/platform/libretro/`:
@@ -63,29 +61,35 @@ Same as before — this step is unchanged from Route A.
 
 Output: `scummvm_libretro.dll` + `scummvm.zip`.
 
-## Then Phase 2: RetroArch UWP integration
+## Then Phase 2: RetroArch UWP shell
 
-- Obtain RetroArch UWP build (release binary or build from source).
-- Create appx: RetroArch + scummvm core + `retroarch.cfg` (auto-load core).
-- Test: app launches → ScummVM launcher GUI appears → game list works.
+- Build `pkg/msvc-uwp/RetroArch-msvcUWP.sln` (x64) from `extern/retroarch`.
+- Package appx: RetroArch + `cores/scummvm_libretro.dll` + `scummvm.zip` +
+  `retroarch.cfg` (auto-load core, empty content).
+- Bump manifest MinVersion → 10.0.17763.0.
+- Test: app launches → ScummVM launcher GUI appears.
 
-## Then Phase 3: File picker + UWP sandbox
+## Then Phase 3: custom core work
 
-- UWP FolderPicker → user picks game folder → files accessible to ScummVM.
-- Test: pick SCUMM game → appears in ScummVM launcher → runs.
+- FS patch (FromApp): `stdiostream.cpp` + `windows-fs.cpp` (+ helper).
+- File picker button in ScummVM launcher → FolderPicker.
+- Custom About screen.
+- spdlog logging wiring.
 
-## Then Phase 4: Xbox + Phase 5: Validation
+## Then Phase 4 (Xbox) + Phase 5 (Validation)
 
 Details in PORT-PLAN.md §4.
 
-## Key files (if still relevant)
+## Key files
 
-- `extern/scummvm/backends/platform/libretro/Makefile` — UWP target at line 398
+- `extern/scummvm/backends/platform/libretro/Makefile` — UWP target (~line 400)
 - `extern/scummvm/backends/platform/libretro/src/libretro-core.cpp` — core entry
-- `extern/scummvm/backends/platform/libretro/src/libretro-os-base.cpp` — OSystem init
-- `extern/scummvm/base/main.cpp:755` — launcherDialog() trigger
+- `extern/scummvm/backends/fs/stdiostream.cpp:190` — `_wfopen` (FS patch point)
+- `extern/scummvm/backends/fs/windows/windows-fs.cpp` — Win32 FS (patch point)
+- `extern/retroarch/pkg/msvc-uwp/RetroArch-msvcUWP/Package.appxmanifest` —
+  has `broadFileSystemAccess`
 
 ## Reference
 
-- PORT-PLAN.md is source of truth for architecture decisions.
-- Old dosbox-uwp docs may be STALE; code + git history win.
+- PORT-PLAN.md = source of truth for architecture decisions.
+- FILESYSTEM.md = FromApp FS strategy + reference implementations.
