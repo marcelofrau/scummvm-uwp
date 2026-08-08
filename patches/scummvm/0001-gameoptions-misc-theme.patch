@@ -1,0 +1,168 @@
+diff --git a/gui/themes/common/highres_layout.stx b/gui/themes/common/highres_layout.stx
+index c8f8d872..96623302 100644
+--- a/gui/themes/common/highres_layout.stx
++++ b/gui/themes/common/highres_layout.stx
+@@ -1876,6 +1876,37 @@
+ 		</layout>
+ 	</dialog>
+ 
++	<dialog name = 'GameOptions_Misc' overlays = 'Dialog.GameOptions.TabWidget'>
++		<layout type = 'vertical' padding = '0, 0, 0, 0'>
++			<widget name = 'Container'
++					type = 'ScrollContainerWidget'
++			/>
++		</layout>
++	</dialog>
++
++	<dialog name = 'GameOptions_Misc_Container' overlays = 'GameOptions_Misc.Container' shading = 'dim'>
++		<layout type = 'vertical' padding = '16, 16, 16, 16' spacing = '8'>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'EnableHotspots'
++						type = 'Checkbox'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'HotspotMarkerPopupDesc'
++						type = 'OptionsLabel'
++				/>
++				<widget name = 'HotspotMarkerPopup'
++						type = 'PopUp'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'ShowHotspotText'
++						type = 'Checkbox'
++				/>
++			</layout>
++		</layout>
++	</dialog>
++
+ 	<dialog name = 'GlobalMenu' overlays = 'screen_center'>
+ 		<layout type = 'vertical' padding = '16, 16, 16, 16' align = 'center'>
+ 			<widget name = 'Logo'
+diff --git a/gui/themes/common/lowres_layout.stx b/gui/themes/common/lowres_layout.stx
+index ae6311ce..4c54c4f2 100644
+--- a/gui/themes/common/lowres_layout.stx
++++ b/gui/themes/common/lowres_layout.stx
+@@ -1703,6 +1703,37 @@
+ 		</layout>
+ 	</dialog>
+ 
++	<dialog name = 'GameOptions_Misc' overlays = 'Dialog.GameOptions.TabWidget'>
++		<layout type = 'vertical' padding = '0, 0, 0, 0'>
++			<widget name = 'Container'
++					type = 'ScrollContainerWidget'
++			/>
++		</layout>
++	</dialog>
++
++	<dialog name = 'GameOptions_Misc_Container' overlays = 'GameOptions_Misc.Container' shading = 'dim'>
++		<layout type = 'vertical' padding = '16, 16, 16, 16' spacing = '8'>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'EnableHotspots'
++						type = 'Checkbox'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'HotspotMarkerPopupDesc'
++						type = 'OptionsLabel'
++				/>
++				<widget name = 'HotspotMarkerPopup'
++						type = 'PopUp'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'ShowHotspotText'
++						type = 'Checkbox'
++				/>
++			</layout>
++		</layout>
++	</dialog>
++
+ 	<dialog name = 'GlobalMenu' overlays = 'screen_center'>
+ 		<layout type = 'vertical' padding = '4, 4, 4, 4' align = 'center' spacing='2'>
+ 			<widget name = 'Title'
+diff --git a/gui/themes/scummclassic/classic_layout.stx b/gui/themes/scummclassic/classic_layout.stx
+index ceafccb9..984c467a 100644
+--- a/gui/themes/scummclassic/classic_layout.stx
++++ b/gui/themes/scummclassic/classic_layout.stx
+@@ -1511,6 +1511,37 @@
+ 		</layout>
+ 	</dialog>
+ 
++	<dialog name = 'GameOptions_Misc' overlays = 'Dialog.GameOptions.TabWidget'>
++		<layout type = 'vertical' padding = '0, 0, 0, 0'>
++			<widget name = 'Container'
++					type = 'ScrollContainerWidget'
++			/>
++		</layout>
++	</dialog>
++
++	<dialog name = 'GameOptions_Misc_Container' overlays = 'GameOptions_Misc.Container' shading = 'dim'>
++		<layout type = 'vertical' padding = '16, 16, 16, 16' spacing = '8'>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'EnableHotspots'
++						type = 'Checkbox'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'HotspotMarkerPopupDesc'
++						type = 'OptionsLabel'
++				/>
++				<widget name = 'HotspotMarkerPopup'
++						type = 'PopUp'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'ShowHotspotText'
++						type = 'Checkbox'
++				/>
++			</layout>
++		</layout>
++	</dialog>
++
+ 	<dialog name = 'GlobalMenu' overlays = 'screen_center'>
+ 		<layout type = 'vertical' padding = '16, 16, 16, 16' align = 'center'>
+ 			<widget name = 'Title'
+diff --git a/gui/themes/scummclassic/classic_layout_lowres.stx b/gui/themes/scummclassic/classic_layout_lowres.stx
+index 0fe3d149..8534634d 100644
+--- a/gui/themes/scummclassic/classic_layout_lowres.stx
++++ b/gui/themes/scummclassic/classic_layout_lowres.stx
+@@ -1532,6 +1532,37 @@
+ 		</layout>
+ 	</dialog>
+ 
++	<dialog name = 'GameOptions_Misc' overlays = 'Dialog.GameOptions.TabWidget'>
++		<layout type = 'vertical' padding = '0, 0, 0, 0'>
++			<widget name = 'Container'
++					type = 'ScrollContainerWidget'
++			/>
++		</layout>
++	</dialog>
++
++	<dialog name = 'GameOptions_Misc_Container' overlays = 'GameOptions_Misc.Container' shading = 'dim'>
++		<layout type = 'vertical' padding = '16, 16, 16, 16' spacing = '8'>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'EnableHotspots'
++						type = 'Checkbox'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'HotspotMarkerPopupDesc'
++						type = 'OptionsLabel'
++				/>
++				<widget name = 'HotspotMarkerPopup'
++						type = 'PopUp'
++				/>
++			</layout>
++			<layout type = 'horizontal' padding = '0, 0, 0, 0' spacing = '10' align = 'center'>
++				<widget name = 'ShowHotspotText'
++						type = 'Checkbox'
++				/>
++			</layout>
++		</layout>
++	</dialog>
++
+ 	<dialog name = 'GlobalMenu' overlays = 'screen_center'>
+ 		<layout type = 'vertical' padding = '2, 2, 2, 6' align = 'center' spacing='0'>
+ 			<widget name = 'Title'

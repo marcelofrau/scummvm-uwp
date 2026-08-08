@@ -20,6 +20,15 @@ namespace ScummVMLauncher
 
         protected override void OnActivated(IActivatedEventArgs args)
         {
+            if (args is ProtocolActivatedEventArgs protocol && protocol.Uri != null)
+            {
+                string query = protocol.Uri.Query ?? string.Empty;
+                if (query.IndexOf("cmd=exit", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Application.Current.Exit();
+                    return;
+                }
+            }
             ActivateRoot();
         }
 

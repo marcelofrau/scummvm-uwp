@@ -1,0 +1,56 @@
+diff --git a/backends/platform/libretro/Makefile b/backends/platform/libretro/Makefile
+index c0ac403b..2df5397b 100644
+--- a/backends/platform/libretro/Makefile
++++ b/backends/platform/libretro/Makefile
+@@ -417,6 +417,7 @@ else ifneq (,$(findstring windows_msvc2017,$(platform)))
+ 
+    CFLAGS += $(MSVC2017CompileFlags)
+    CXXFLAGS += $(MSVC2017CompileFlags)
++   CXXFLAGS += -std:c++17
+ 
+    TargetArchMoniker = $(subst $(WinPartition)_,,$(PlatformSuffix))
+ 
+@@ -595,7 +596,9 @@ endif
+ # Define build flags
+ DEPDIR        = .deps
+ 
++ifneq ($(NO_GCC),1)
+ CXXFLAGS += -Wno-reorder
++endif
+ 
+ # Compile platform specific parts (e.g. filesystem)
+ ifeq ($(platform), win)
+diff --git a/backends/platform/libretro/Makefile.common b/backends/platform/libretro/Makefile.common
+index 1213a80a..b2ed56a3 100644
+--- a/backends/platform/libretro/Makefile.common
++++ b/backends/platform/libretro/Makefile.common
+@@ -237,7 +237,9 @@ SCUMMVM_THEME_SUBDIR   := theme
+ INCLUDES += -I$(SCUMMVM_PATH)
+ DEFINES  += -D__LIBRETRO__ -DNONSTANDARD_PORT -DUSE_RGB_COLOR -DUSE_OSD -DUSE_TRANSLATION -DDETECTION_STATIC -DHAVE_CONFIG_H -DENABLE_VKEYBD
+ DEFINES  += -DCORE_NAME=\"$(CORE_NAME)\" -DCORE_EXTENSIONS=\"$(CORE_EXTENSIONS)\" -DSCUMMVM_SYSTEM_SUBDIR=\"$(SCUMMVM_SYSTEM_SUBDIR)\" -DSCUMMVM_EXTRA_SUBDIR=\"$(SCUMMVM_EXTRA_SUBDIR)\" -DSCUMMVM_THEME_SUBDIR=\"$(SCUMMVM_THEME_SUBDIR)\"
++ifneq ($(NO_GCC),1)
+ CXXFLAGS += -Wno-long-long -Wno-multichar -Wno-unknown-pragmas -Wno-reorder -Wno-undefined-var-template
++endif
+ 
+ ifeq ($(USE_LIBCO), 1)
+    DEFINES += -DUSE_LIBCO
+diff --git a/backends/platform/libretro/include/libretro-fs.h b/backends/platform/libretro/include/libretro-fs.h
+index 7541d540..13b92f5c 100644
+--- a/backends/platform/libretro/include/libretro-fs.h
++++ b/backends/platform/libretro/include/libretro-fs.h
+@@ -27,7 +27,15 @@
+ #ifdef MACOSX
+ #include <sys/types.h>
+ #endif
++#ifdef _MSC_VER
++#include <io.h>
++#ifndef F_OK
++#define F_OK 0
++#endif
++#define access _access
++#else
+ #include <unistd.h>
++#endif
+ 
+ /**
+  * Implementation of the ScummVM file system API based on LibRetro.
