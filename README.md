@@ -70,20 +70,31 @@ Connect a gamepad or use a USB keyboard + mouse. See [Controls](#controls).
 
 ## Controls
 
-The shell presents ScummVM through a standard RetroPad mapping, so every menu and
-the games themselves are navigable with a controller:
+The shell presents ScummVM through the core's standard RetroPad mapping, so the
+launcher and the games are fully navigable with a controller. On the Xbox
+controller the RetroPad buttons map as follows:
 
-| Input | Action |
-|-------|--------|
-| **D-Pad / Left Stick** | Navigate menus / game cursor |
-| **A** | Confirm / primary action |
-| **B** | Back / cancel |
-| **X / Y** | Context actions (per game / ScummVM keybindings) |
-| **Start / Select** | ScummVM in-game menus / virtual keyboard where applicable |
+| Input | ScummVM function |
+|-------|------------------|
+| **Left Stick / D-Pad** | Move mouse cursor |
+| **A** | Space |
+| **B** | Enter |
+| **X** | F5 (in-game menu) |
+| **Y** | Escape |
+| **LB** | Left mouse click |
+| **RB** | Right mouse click |
+| **RT** | Cursor fine control |
+| **Select** | Toggle virtual keyboard |
+| **Start** | Open ScummVM launcher / GUI |
+| **Right Stick** | Arrow keys (↑ ↓ ← →) |
+| **LT / L3 / R3** | Unused (no default mapping) |
 
-A USB **keyboard** and **mouse** work as well — ScummVM's standard key bindings
-(F5 in-game menu, Ctrl+F5 quick save, etc.) behave exactly like the desktop
-build. Full keybindings are configurable inside ScummVM's Options dialogs.
+This is the same mapping the ScummVM libretro core ships upstream — you can
+re-bind any of it inside ScummVM (Options → Keymaps). A USB **keyboard** and
+**mouse** work as well, with the desktop key bindings (F5 in-game menu,
+Ctrl+F5 quick save, etc.). See
+[docs/CONTROLS.md](docs/CONTROLS.md) for the full reference, including cursor
+behavior options.
 
 ---
 
@@ -278,6 +289,7 @@ protocols:
 | [Handoff](docs/HANDOFF.md) | Project state for the next agent/session |
 | [Port Plan](docs/PORT-PLAN.md) | Design history and the Route C decision |
 | [Filesystem](docs/FILESYSTEM.md) | UWP sandbox FS strategy (FromApp API) |
+| [Controls](docs/CONTROLS.md) | Full controller / keyboard / mouse reference for the ScummVM core |
 | [Patch Workflow](patches/scummvm/README.md) | Theme patches + zip regeneration workflow |
 
 ---
