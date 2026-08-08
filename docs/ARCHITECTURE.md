@@ -287,10 +287,11 @@ All scripts live in `scripts/`:
 
 | Script | What it does |
 |---|---|
-| `build.ps1` | Finds MSBuild (vswhere), runs `/t:Restore` then builds `Release\x64`. Restore before build is required (deleting `obj/` without restore breaks with WMC1006). |
+| `build.ps1` | Finds MSBuild (vswhere), runs `/t:Restore` then builds `Release\x64`. Restore before build is required (deleting `obj/` without restore breaks with WMC1006). The launcher's PreBuildEvent runs `tools/version.ps1` (bumps the build counter). |
 | `clean.ps1` | `msbuild /t:Clean` + deletes `AppPackages`, `bin`, `obj`. |
 | `rebuild.ps1` | `clean.ps1` + `build.ps1`. |
-| `package.ps1` | Builds (unless `-SkipBuild`), signs with `signtool` (`certs/dosbox-uwp.pfx`, password `dev`), copies to `dist\ScummVM.appx`. |
+| `package.ps1` | Builds (unless `-SkipBuild`), signs with `signtool` (`-PfxPath`, default `certs/dosbox-uwp.pfx`, password `dev`), copies to `dist\ScummVM.appx` and builds the release zip `scummvm-uwp_<ver>_x64.zip` (appx + `Dependencies\x64`). |
+| `version.ps1` (`tools/`) | PreBuildEvent: reads `display_version` from `cores/scummvm_libretro.info`, increments `build_counter.txt`, rewrites `Package.appxmanifest` + `version.txt`. Run manually with `-DontIncrement` to just normalize. |
 | `install.ps1` | `Add-AppxPackage` locally (Windows) with optional VCLibs deps. |
 | `run.ps1` | `install.ps1` + `Start-Process 'scummvm-launcher:'`. |
 | `deploy-xbox.ps1` | WDP deploy to Xbox Dev Mode (see §10.1). |
@@ -319,6 +320,38 @@ and `Assets/`.
    (`1e4cf179-…`). The script only *reports* it — it never uninstalls,
    upgrades, or touches it. ScummVM coexists as a separate package and never
    registers the `retroarch:` protocol.
+
+### 10.2 Versioning & CI/CD
+
+**Scheme:** `<ScummVM base>.<build counter>` → `2026.3.1.<N>` (see
+`VERSIONS.md`). The base always derives from the **shipped** core, so a core
+upgrade is visible in the app version.
+
+- Source of truth: `cores/scummvm_libretro.info` → `display_version`
+  (`"2026.3.1git"` → base `2026.3.1`, stripping the `git` suffix).
+- `tools/version.ps1` (PreBuildEvent) increments `build_counter.txt` and
+  rewrites both `Package.appxmanifest` (`<Identity Version="…"/>`) and
+  `version.txt`.
+- Releases are cut by tagging `v2026.3.1.<N>`.
+
+**CI (` .github/workflows/release.yml`)** — triggered on `v*` tags or
+`workflow_dispatch`:
+
+1. `actions/checkout@v4` with `submodules: recursive`, `fetch-depth: 0`, and
+   **`lfs: true`** (the versioned `system/scummvm.zip` is LFS-tracked — a
+   checkout without LFS yields a 133-byte pointer and the build would ship a
+   broken zip).
+2. Generates a **fresh self-signed cert** (`CN=ScummVM UWP CI`, exported to
+   `certs/scummvm-uwp.pfx`) — Xbox Developer Mode does not require installing
+   the cert, so no certificate is shipped in the release zip.
+3. `scripts/build.ps1` (bumps version via PreBuildEvent) → `scripts/package.ps1
+   -SkipBuild -PfxPath certs\scummvm-uwp.pfx` signs the appx and builds the zip
+   (`appx` + x64 dependencies only).
+4. Uploads the artifact and creates the GitHub Release (name `ScummVM UWP
+   <ver>`, tag `v<ver>`, static `release_notes.md` body).
+
+The release zip intentionally contains **only** the appx + dependencies — no
+`Install.ps1`, no `.cer` (Dev Mode sideloading doesn't need them).
 
 ## 11. Debugging / observability
 

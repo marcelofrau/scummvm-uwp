@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          lfs: true
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Create signing certificate
+        shell: pwsh
+        run: |
+          $certDir = "certs"
+          $pfx = "$certDir\scummvm-uwp.pfx"
+          $certPass = "dev"
+          if (-not (Test-Path $pfx)) {
+            New-Item -ItemType Directory -Path $certDir -Force | Out-Null
+            $secPass = ConvertTo-SecureString $certPass -AsPlainText -Force
+            $cert = New-SelfSignedCertificate -Subject "CN=ScummVM UWP CI" -FriendlyName "scummvm-uwp" `
+              -Type CodeSigningCert -KeyUsage DigitalSignature `
+              -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3") `
+              -CertStoreLocation Cert:\CurrentUser\My
+            Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $secPass -Force | Out-Null
+            Write-Host "Cert created: thumbprint=$($cert.Thumbprint)"
+          } else {
+            Write-Host "Cert exists"
+          }
+
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build.ps1 -Configuration Release -Platform x64
+
+      - name: Read actual version
+        id: version
+        shell: pwsh
+        run: |
+          $ver = (Get-Content 'version.txt' -Raw).Trim()
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          echo "Actual version: $ver"
+
+      - name: Package & Create Distributable
+        id: package
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 -SkipBuild -PfxPath "certs\scummvm-uwp.pfx" -PfxPassword "dev"
+          $ver = "${{ steps.version.outputs.version }}"
+          # PreBuildEvent bumped the version during Build; verify against AppPackages output
+          $pkgRoot = "launcher\ScummVMLauncher\AppPackages"
+          $dir = Get-ChildItem $pkgRoot -Directory |
+            Where-Object { $_.Name -match 'ScummVMLauncher_(\d+\.\d+\.\d+\.\d+)_x64_Test' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($dir -and $dir.Name -match '(\d+\.\d+\.\d+\.\d+)') {
+            $ver = $Matches[1]
+            Write-Host "Actual version from AppPackages: $ver"
+          }
+          $zipName = "scummvm-uwp_${ver}_x64.zip"
+          if (-not (Test-Path $zipName)) { Write-Error "Zip not found: $zipName"; exit 1 }
+          echo "version=$ver" >> $env:GITHUB_OUTPUT
+          echo "tag=v$ver" >> $env:GITHUB_OUTPUT
+          echo "zip=$zipName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scummvm-uwp-${{ steps.package.outputs.version }}
+          path: ${{ steps.package.outputs.zip }}
+          compression-level: 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "ScummVM UWP ${{ steps.package.outputs.version }}"
+          tag_name: ${{ steps.package.outputs.tag }}
+          body_path: release_notes.md
+          files: ${{ steps.package.outputs.zip }}
+          draft: false
+          prerelease: false
+          make_latest: true

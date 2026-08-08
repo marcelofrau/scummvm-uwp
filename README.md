@@ -1,87 +1,303 @@
-# ScummVM UWP — ScummVM on Xbox / Windows
+<p align="center">
+  <img src="docs/social-preview.jpg" alt="ScummVM — Xbox / Windows UWP Port" width="800"/>
+</p>
 
-Run **ScummVM** on Xbox Series (and Windows 10/11 Universal) using a
-**RetroArch UWP shell** + the **ScummVM libretro core**. A thin C# launcher
-drives the whole UX: splash screen, first-run bootstrap, config seeding, and a
-clean handoff that returns the console to the dashboard when you quit a game.
+<p align="center">
+  <strong>Adventure games on Windows and Xbox — ScummVM, no RetroArch frontend, no fuss.</strong>
+</p>
 
-## What it does
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/badge/status-playable-yellow?style=for-the-badge">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Xbox-blue?style=for-the-badge">
+  <img alt="Version" src="https://img.shields.io/github/v/release/marcelofrau/scummvm-uwp?style=for-the-badge">
+  <img alt="Arch" src="https://img.shields.io/badge/architecture-x64%20only-lightgrey?style=for-the-badge">
+  <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0-red?style=for-the-badge">
+</p>
 
-- One appx package, **two UWP applications**:
-  - **ScummVMLauncher** (C#, visible tile "ScummVM") — splash + bootstrap.
-  - **RetroArch UWP** (hidden, `AppListEntry="none"`) — rendering, audio,
-    input, frame pacing. No custom RetroArch code.
-- ScummVM runs as a **libretro core** (`scummvm_libretro.dll`, buildbot
-  binary) started with no game content → ScummVM's own launcher GUI.
-- Clean quit: ScummVM exit → RetroArch shutdown → launcher `cmd=exit` →
-  Xbox dashboard. No RGUI menu, no OSD toast.
-- English UI, orange `#CC6701` branding, 4 s splash floor, `gui_scale=150`
-  on first run.
+---
 
-## Docs
+## What is this?
 
-| Doc | What it covers |
-|---|---|
-| `docs/ARCHITECTURE.md` | Current shipped architecture (components, protocols, flows, build/deploy) |
-| `docs/DISCOVERIES.md` | Chronological log of every problem found and fixed (16 entries) |
-| `docs/HANDOFF.md` | State of the project for the next agent/session |
-| `docs/PORT-PLAN.md` | Design history and the Route C decision |
-| `docs/FILESYSTEM.md` | UWP sandbox FS strategy (FromApp API) |
-| `patches/scummvm/README.md` | ScummVM submodule patches + theme regen workflow |
+A standalone UWP port of [ScummVM](https://www.scummvm.org/) — the classic
+point-and-click adventure engine (Monkey Island, Broken Sword, Discworld, Kyrandia,
+Simon the Sorcerer…). Runs natively on **Windows 11** and **Xbox Series (Dev Mode)**.
 
-## Repository layout
+It bundles the **ScummVM libretro core** (the same binary used in RetroArch) and
+hosts it in a hidden **RetroArch UWP shell** that provides rendering, audio, and
+input. On top sits a thin **C# launcher** that owns the whole experience: branded
+splash, first-run bootstrap (unpacks the data files + themes), config seeding, and
+a clean handoff that drops you straight back to the dashboard when you quit.
 
-```
-├── launcher/ScummVMLauncher/   C# UWP launcher (UI, bootstrap, handoff)
-│   ├── system/scummvm.zip      Versioned: datafiles + patched themes (~76 MB)
-│   └── cores/                  Core DLL lives here (gitignored, re-downloadable)
-├── extern/scummvm              Submodule — clean upstream checkout
-├── extern/retroarch            Submodule — clean upstream (XboxEmulationHub fork)
-├── patches/scummvm/            0001 theme fix (essential), 0002 MSVC build (optional)
-├── scripts/                    build / package / deploy / status helpers
-├── assets/                     Branding sources (splash .pdn, Numix icons)
-└── docs/                       Architecture, discoveries, handoff, plans
-```
+There is **no RetroArch frontend** in the picture — no RGUI menu, no OSD toasts.
+Quitting a game returns you to the console UI. The app even **coexists** with a
+regular RetroArch install on the same console (separate package, separate
+`scummvm-core:` protocol — it never touches the `retroarch:` one).
 
-> `extern/scummvm` and `extern/retroarch` are kept **100% upstream** (no fork).
-> Any delta lives as a patch in `patches/scummvm/`. The versioned
-> `system/scummvm.zip` already contains the patched themes — regenerate it
-> via the workflow in `patches/scummvm/README.md` when updating the core.
+---
 
-## Build & package (Windows)
+## Quick Start
 
-Requires VS2022 Community (found via `vswhere`) and the Windows SDK.
+### 1. Install
+
+**Windows:**
+Download the latest `scummvm-uwp_<version>_x64.zip` from
+[Releases](https://github.com/marcelofrau/scummvm-uwp/releases). Extract and run
+the `.appx` (sideloading requires Developer Mode enabled in Windows Settings).
+
+**Xbox:**
+Enable Developer Mode on your Xbox and either deploy the `.appx` via the
+[Xbox Device Portal](https://learn.microsoft.com/en-us/gaming/gdk/_content/gc/features/live/testing-on-xbox-devkits)
+or use the deploy script (see [Building from Source](#building-from-source)).
+
+### 2. Add Games
+
+ScummVM ships with its own launcher GUI (the same one from the desktop version),
+driven entirely by gamepad or keyboard. On first run it unpacks its data files
+into `LocalState\system` automatically.
+
+Games are added by pointing ScummVM at the folder that contains the game files
+(e.g. the Monkey Island / Broken Sword CD folder) or a `.scummvm` file that
+describes a game. Supported engines include the classic LucasArts SCUMM games,
+Sierra AGI/Sierra games, Broken Sword, Discworld, the Kyrandia trilogy, Simon the
+Sorcerer, and many more — see the full list on
+[ScummVM.org](https://www.scummvm.org/).
+
+### 3. Play
+
+Connect a gamepad or use a USB keyboard + mouse. See [Controls](#controls).
+
+---
+
+## Controls
+
+The shell presents ScummVM through a standard RetroPad mapping, so every menu and
+the games themselves are navigable with a controller:
+
+| Input | Action |
+|-------|--------|
+| **D-Pad / Left Stick** | Navigate menus / game cursor |
+| **A** | Confirm / primary action |
+| **B** | Back / cancel |
+| **X / Y** | Context actions (per game / ScummVM keybindings) |
+| **Start / Select** | ScummVM in-game menus / virtual keyboard where applicable |
+
+A USB **keyboard** and **mouse** work as well — ScummVM's standard key bindings
+(F5 in-game menu, Ctrl+F5 quick save, etc.) behave exactly like the desktop
+build. Full keybindings are configurable inside ScummVM's Options dialogs.
+
+---
+
+## Features
+
+| Feature | Status |
+|---------|--------|
+| ScummVM 2026.3.1 core (libretro buildbot binary) | ✅ Shipped |
+| RetroArch UWP shell: video / audio / input / pacing | ✅ Done |
+| Thin C# launcher: splash + first-run bootstrap + handoff | ✅ Done |
+| Clean quit to dashboard (no RGUI, no OSD toast) | ✅ Done |
+| Data files + patched themes bundled (`system/scummvm.zip`, versioned) | ✅ Done |
+| Game Options (Misc tab) crash — fixed (theme version skew) | ✅ Done |
+| `gui_scale=150`, English UI, orange `#CC6701` branding | ✅ Done |
+| Xbox deploy via Device Portal (coexists with RetroArch) | ✅ Done |
+| Self-signed packaging + GitHub Releases CI (`v*` tag) | ✅ Done |
+| Automatic version sync with the bundled core | ✅ Done |
+| FromApp filesystem access (sandbox) | ⏳ Planned |
+| Local MSVC core build | ⏳ Optional (patch `0002`) |
+
+---
+
+## Versioning
+
+The app version always mirrors the **shipped core**:
+
+`<ScummVM base>.<build counter>` → e.g. **2026.3.1.7**
+
+- Base comes from `cores/scummvm_libretro.info` (`display_version = "2026.3.1git"`
+  → `2026.3.1`), so a core upgrade is always visible in the app version.
+- The build counter is bumped on every build (`build_counter.txt`) by
+  `tools/version.ps1`, wired as a PreBuildEvent in the launcher project.
+- A release is cut by tagging `v2026.3.1.<N>` — the CI builds, packages, and
+  publishes it automatically.
+
+See [VERSIONS.md](VERSIONS.md) for the full matrix.
+
+---
+
+## Building from Source
+
+### Prerequisites
+
+- **Visual Studio 2022** Community (found via `vswhere`) with the UWP workload
+- **Windows SDK 10.0.26100.0**
+- **x64 only** — ARM/ARM64/x86 not supported (Xbox Series is x64)
+
+### Build
 
 ```powershell
-./scripts/build.ps1          # Restore + build Release\x64
-./scripts/package.ps1        # Build + sign (certs/dosbox-uwp.pfx) → dist\ScummVM.appx
-./scripts/install.ps1        # Add-AppxPackage locally
-./scripts/run.ps1            # Install + launch (scummvm-launcher:)
-./scripts/clean.ps1 / rebuild.ps1
-./scripts/status.ps1         # Git/submodule/version/package state
+./scripts/build.ps1 -Configuration Release -Platform x64
 ```
 
-Signing uses `certs/dosbox-uwp.pfx` (test/dev cert, password `dev`). Replace
-with your own cert for real distribution.
+Restores NuGet packages, then builds `Release\x64`.
 
-## Deploy to Xbox (Developer Mode)
+### Package (APPX + release zip)
 
-`scripts/deploy-xbox.ps1` deploys over the **Xbox Device Portal** (HTTPS
-`:11443`, CSRF handshake). Copy `.env.example` → `.env` and set your Xbox IP /
-credentials. It **coexists** with any existing RetroArch install on the console
-— it never uninstalls, upgrades, or registers the `retroarch:` protocol.
+```powershell
+./scripts/package.ps1 -Configuration Release -Platform x64
+```
+
+Builds (unless `-SkipBuild`), signs the appx with the cert in `certs/`
+(`dosbox-uwp.pfx` locally; CI generates its own), and produces:
+
+- `dist\ScummVM.appx`
+- `scummvm-uwp_<version>_x64.zip` — the appx + x64 dependencies, ready to share
+
+### Run (Windows)
+
+```powershell
+./scripts/run.ps1 -Configuration Release -Platform x64
+```
+
+### Deploy (Xbox)
 
 ```powershell
 Copy-Item .env.example .env   # then edit XBOX_IP / XBOX_USER / XBOX_PASS
 ./scripts/deploy-xbox.ps1
 ```
 
+Deploys the appx over the **Xbox Device Portal** (HTTPS `:11443`, CSRF
+handshake). It never uninstalls or upgrades an existing RetroArch install on the
+console.
+
+### CI/CD
+
+`.github/workflows/release.yml` — triggered by a `v*` tag or manually
+(`workflow_dispatch`):
+
+1. Checkout with **recursive submodules + LFS** (the versioned `scummvm.zip`
+   lives in LFS).
+2. Generate a self-signed cert, build, package (`appx` + deps).
+3. Upload artifact and create the GitHub Release with static
+   `release_notes.md` body.
+
+---
+
+## Project Structure
+
+```
+scummvm-uwp/
+├── launcher/ScummVMLauncher/          ← C# UWP launcher (UI, bootstrap, handoff)
+│   ├── App.xaml.cs / MainPage.xaml.cs ← handoff, SeedRetroArchConfig, 4s splash floor
+│   ├── system/scummvm.zip             ← versioned: datafiles + patched themes (~76 MB, LFS)
+│   ├── cores/                         ← scummvm_libretro.dll + .info (dll gitignored)
+│   └── Package.appxmanifest           ← two apps: "ScummVM" + hidden "RetroArch"
+├── extern/
+│   ├── scummvm/                       ← Submodule — clean upstream checkout
+│   └── retroarch/                     ← Submodule — XboxEmulationHub fork (shell only)
+├── patches/scummvm/                   0001 theme fix (essential), 0002 MSVC build (optional)
+├── tools/version.ps1                  ← PreBuildEvent: sync version with the core
+├── scripts/                           ← build / package / install / run / deploy / status
+├── assets/                            ← Branding sources (splash, tiles, social preview)
+├── docs/                              ← Architecture, discoveries, handoff, plans
+└── .github/workflows/release.yml      ← CI: build + sign + release on v* tag
+```
+
+> `extern/scummvm` and `extern/retroarch` are kept **100% upstream** (no fork).
+> Any ScummVM delta lives as a patch in `patches/scummvm/`, and the versioned
+> `system/scummvm.zip` already ships the patched themes — regenerate it via the
+> workflow in `patches/scummvm/README.md` when updating the core.
+
+---
+
+## For Developers
+
+### How It Works
+
+The app is a **libretro frontend chain** with three actors, joined by two URI
+protocols:
+
+1. **Launcher (`ScummVMLauncher.exe`)** — on start it unpacks
+   `system/scummvm.zip` into `LocalState\system` (idempotent via the
+   `.scummvm-ready` flag), writes a minimal `scummvm.ini`
+   (`gui_theme=scummremastered`), seeds `retroarch.cfg`, holds a 4-second
+   splash floor, then fires `scummvm-core:` at RetroArch.
+
+2. **Shell (`RetroArch-msvcUWP.exe`)** — hidden app (`AppListEntry="none"`).
+   Parses the protocol, runs `rarch_main` with `-L cores\scummvm_libretro.dll`,
+   and calls `retro_load_game(NULL)` → ScummVM's own launcher GUI renders
+   straight into RetroArch's video output. RetroArch is a dumb renderer here;
+   ScummVM owns its entire interface.
+
+3. **Handoff** — quitting ScummVM's GUI → `RETRO_ENVIRONMENT_SHUTDOWN` →
+   with `load_dummy_on_core_shutdown=false` RetroArch unloads instead of
+   landing in RGUI, then `App::Uninitialize` fires
+   `scummvm-launcher:?cmd=exit`, and the launcher calls
+   `Application.Current.Exit()` → dashboard. `video_font_enable=false` keeps the
+   OSD toast from flashing during shutdown.
+
+### Key Technical Decisions
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Shell | RetroArch UWP (compiled from source, XboxEmulationHub fork) | Proven UWP libretro host: rendering, audio, input, pacing. No RetroArch code changes. |
+| Core | Bundled buildbot `scummvm_libretro.dll` | Same binary as RetroArch; no local core build needed to ship |
+| Core source | `extern/scummvm` kept clean upstream | Deltas live as patches (`patches/scummvm/`) |
+| Video driver | Forced `d3d11` | A stale `gl` driver after a HW core unload crashes the menu on Xbox |
+| Dummy core | `load_dummy_on_core_shutdown=false` | Makes quit actually quit instead of opening RGUI |
+| OSD | `video_font_enable=false` | No toast flash during shutdown |
+| Versioning | Derived from the shipped core's `display_version` | App version always tracks the real ScummVM version |
+| Theme fix | Patched themes inside the versioned zip | Newer core registers a `GameOptions_Misc` dialog the older themes lacked (fatal tab crash — fixed) |
+
+### Submodule Policy
+
+- **Never commit to `extern/scummvm` / `extern/retroarch`** — patches go in
+  `patches/scummvm/`.
+- When the core updates: update the submodule, apply `0001` (and `0002` if
+  rebuilding with MSVC), regenerate the themes, **commit the new zip**, revert
+  the submodule. Full workflow in `patches/scummvm/README.md`.
+
+### Known Gotchas
+
+| Issue | Detail |
+|-------|--------|
+| Version skew | The buildbot core can be ahead of the theme sources — patch `0001` fixes `GameOptions_Misc`; regenerate `scummvm.zip` on every core update |
+| Restore required | Deleting `obj/` without a `/t:Restore` first breaks with WMC1006 — always use `scripts/build.ps1` |
+| LFS | `system/scummvm.zip` (~76 MB) is LFS-tracked; CI uses `lfs: true` |
+| DLL over limit | `scummvm_libretro.dll` (~124 MB) exceeds GitHub's 100 MB file limit — gitignored, re-download from the buildbot |
+| Version downgrade | UWP refuses to install a package with a lower version than the installed one — always bump the counter |
+| Coexistence | Never register/override the `retroarch:` protocol or touch the user's real RetroArch package |
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | Current shipped architecture: components, protocols, bootstrap, quit flow, build/deploy |
+| [Versions](VERSIONS.md) | Version matrix and how the version is computed |
+| [Discoveries](docs/DISCOVERIES.md) | Chronological log of every problem found and fixed (16 entries) |
+| [Handoff](docs/HANDOFF.md) | Project state for the next agent/session |
+| [Port Plan](docs/PORT-PLAN.md) | Design history and the Route C decision |
+| [Filesystem](docs/FILESYSTEM.md) | UWP sandbox FS strategy (FromApp API) |
+| [Patch Workflow](patches/scummvm/README.md) | Theme patches + zip regeneration workflow |
+
+---
+
+## Dependencies & Credits
+
+| Project | Role | License |
+|---------|------|---------|
+| [ScummVM](https://github.com/scummvm/scummvm) | The adventure game engine itself. Shipped as the libretro buildbot binary + included as submodule at `extern/scummvm`. | GPL-3.0 |
+| [RetroArch UWP (XboxEmulationHub fork)](https://github.com/XboxEmulationHub/RetroArch) | UWP shell: rendering, audio, input, frame pacing. Hidden app, no frontend UI. Submodule at `extern/retroarch`. | GPL-3.0 |
+| [dosbox-uwp](https://github.com/marcelofrau/dosbox-uwp) | Reference UWP libretro shell + deploy tooling this repo was modeled on | GPL-2.0 |
+| [Numix icon theme](https://github.com/numixproject/numix-icon-theme) | Launcher UI icons | GPL-3.0 |
+
+---
+
 ## License
 
-**GPL-3.0** — same as ScummVM. See `LICENSE`.
+**GPL-3.0** — same as ScummVM. See [`LICENSE`](LICENSE) for the full text.
 
-ScummVM core: [GPL-3.0](https://github.com/scummvm/scummvm) — RetroArch shell:
-[XboxEmulationHub/RetroArch](https://github.com/XboxEmulationHub/RetroArch)
-(GPL-3.0) — launcher UI icons: [Numix icon
-theme](https://github.com/numixproject/numix-icon-theme) (GPL-3.0) — shell
-base: [dosbox-uwp](https://github.com/marcelofrau/dosbox-uwp).
+- ScummVM core: [GPL-3.0](https://github.com/scummvm/scummvm)
+- RetroArch shell: [XboxEmulationHub/RetroArch](https://github.com/XboxEmulationHub/RetroArch) (GPL-3.0)
+- Launcher icons: [Numix icon theme](https://github.com/numixproject/numix-icon-theme) (GPL-3.0)
+- Shell base: [dosbox-uwp](https://github.com/marcelofrau/dosbox-uwp) (GPL-2.0)

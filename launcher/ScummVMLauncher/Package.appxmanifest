@@ -10,7 +10,7 @@
   <Identity
     Name="148433a7-fd05-4815-9e57-fa81cb66d285"
     Publisher="CN=Marcelo Frau"
-    Version="2.0.0.0" />
+    Version="2026.3.1.1" />
 
   <mp:PhoneIdentity PhoneProductId="148433a7-fd05-4815-9e57-fa81cb66d285" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
