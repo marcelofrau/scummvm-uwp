@@ -201,14 +201,15 @@ Builds (unless `-SkipBuild`), signs the appx with the cert in `certs/`
 
 ### Deploy (Xbox)
 
-```powershell
-Copy-Item .env.example .env   # then edit XBOX_IP / XBOX_USER / XBOX_PASS
-./scripts/deploy-xbox.ps1
-```
+Deploy is **manual** through the Xbox Device Portal (Dev Mode):
 
-Deploys the appx over the **Xbox Device Portal** (HTTPS `:11443`, CSRF
-handshake). It never uninstalls or upgrades an existing RetroArch install on the
-console.
+1. Open `https://<ip>:11443` in a browser (username/password from Dev Mode).
+2. Go to **Apps** → **Add** → upload the `.appx` from `dist\` (or the
+   `AppPackages\…_x64_Test\` output).
+3. Click **Deploy** and launch the app.
+
+`scripts/deploy-xbox.ps1` was removed — it didn't work. The portal never
+uninstalls or upgrades an existing RetroArch install on the console.
 
 ### CI/CD
 

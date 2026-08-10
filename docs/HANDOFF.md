@@ -78,8 +78,9 @@ limit; re-download from buildbot when needed).
   handoff (`scummvm-core:`), 4s splash floor, `gui_scale=150` first run.
 - `launcher/ScummVMLauncher/system/scummvm.zip` — **versioned** datafiles +
   patched themes.
-- `scripts/deploy-xbox.ps1` — WDP deploy (HTTPS :11443, CSRF dance, coexists
-  with the user's real RetroArch install — never touches it).
+- Xbox deploy — **manual** via Device Portal (`https://<ip>:11443`, upload appx
+  in **Apps** → **Add**). `scripts/deploy-xbox.ps1` was removed (didn't work).
+  Coexists with the user's real RetroArch install — never touches it.
 - `scripts/build.ps1` / `package.ps1` / `clean.ps1` / `rebuild.ps1` — local
   MSBuild + sign (`certs/dosbox-uwp.pfx`, pw `dev`).
 

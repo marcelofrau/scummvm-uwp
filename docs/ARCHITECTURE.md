@@ -294,7 +294,7 @@ All scripts live in `scripts/`:
 | `version.ps1` (`tools/`) | PreBuildEvent: reads `display_version` from `cores/scummvm_libretro.info`, increments `build_counter.txt`, rewrites `Package.appxmanifest` + `version.txt`. Run manually with `-DontIncrement` to just normalize. |
 | `install.ps1` | `Add-AppxPackage` locally (Windows) with optional VCLibs deps. |
 | `run.ps1` | `install.ps1` + `Start-Process 'scummvm-launcher:'`. |
-| `deploy-xbox.ps1` | WDP deploy to Xbox Dev Mode (see §10.1). |
+| `deploy-xbox.ps1` | **Removed** (didn't work). Xbox deploy is manual via Device Portal (see §10.1). |
 | `status.ps1` | Git status, submodules, version, appx signature/state. |
 
 The appx is ~190 MB and contains 133 entries: the two EXEs, the RetroArch
@@ -304,20 +304,21 @@ and `Assets/`.
 
 ### 10.1 Xbox deploy (WDP)
 
-`deploy-xbox.ps1` talks to the Xbox Device Portal:
+Deploy is **manual** through the Xbox Device Portal. The removed
+`deploy-xbox.ps1` used to talk to it as follows — the API reference stays
+relevant for portal-side scripting:
 
-1. Reads `XBOX_IP` / `XBOX_USER` / `XBOX_PASS` from `.env`.
-2. Endpoint `https://<ip>:11443`, `Authorization: Basic base64(user:pass)`.
-3. CSRF dance: first `GET /api/os/info` returns `Set-Cookie: CSRF-Token=…`;
+1. Endpoint `https://<ip>:11443`, `Authorization: Basic base64(user:pass)`.
+2. CSRF dance: first `GET /api/os/info` returns `Set-Cookie: CSRF-Token=…`;
    every POST/DELETE sends `X-CSRF-Token: <token>` + the cookie jar.
-4. Lists packages via `GET /api/app/packagemanager/packages` — the field is
+3. Lists packages via `GET /api/app/packagemanager/packages` — the field is
    **`InstalledPackages`** (not `Packages`).
-5. Installs via `POST /api/app/packagemanager/package?package=<file>` with
+4. Installs via `POST /api/app/packagemanager/package?package=<file>` with
    `-F "package=@file"` (multipart). Returns 202.
-6. Launches via `POST /api/taskmanager/app` with
+5. Launches via `POST /api/taskmanager/app` with
    `{ AppId: "App", PackageFamilyName: <pkg> }` (JSON).
-7. **Coexistence rule:** the user has a real RetroArch install
-   (`1e4cf179-…`). The script only *reports* it — it never uninstalls,
+6. **Coexistence rule:** the user has a real RetroArch install
+   (`1e4cf179-…`). Deploy only *reports* it — it never uninstalls,
    upgrades, or touches it. ScummVM coexists as a separate package and never
    registers the `retroarch:` protocol.
 

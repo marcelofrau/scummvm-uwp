@@ -207,9 +207,10 @@ the native splash could not be stretched to hold the latency.
 - Launch: `POST /api/taskmanager/app` with JSON
   `{ AppId: "App", PackageFamilyName: … }`.
 - **Coexistence:** a real RetroArch install (`1e4cf179-f3c2-404f-b9f3-cb2070a5aad8`)
-  lives on the console. `deploy-xbox.ps1` only reports it; it never
-  uninstalls/upgrades it. ScummVM is a separate package (`148433a7-…`) with its
-  own `LocalState` and its own protocols (`scummvm-core:`, never `retroarch:`).
+  lives on the console. Deploy (manual via Device Portal) only reports it; it
+  never uninstalls/upgrades it. ScummVM is a separate package (`148433a7-…`)
+  with its own `LocalState` and its own protocols (`scummvm-core:`, never
+  `retroarch:`).
 
 ## 12. Appx contents (current, verified)
 

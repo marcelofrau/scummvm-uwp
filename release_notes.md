@@ -41,7 +41,7 @@ This is the first public release of the standalone UWP port.
    - **Windows** — sideloading requires Developer Mode
      (Settings → Privacy & security → For developers).
    - **Xbox** — enable Developer Mode + Device Portal, then install through
-     the portal (or deploy from source: `./scripts/deploy-xbox.ps1`).
+     the portal (upload the `.appx` in **Apps** → **Add** → **Deploy**).
 4. Launch **ScummVM UWP**, wait for the first-run setup, add your game folder
    and play.
 

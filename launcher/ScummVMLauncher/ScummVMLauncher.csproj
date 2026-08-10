@@ -50,6 +50,7 @@
     <Content Include="RetroArch-msvcUWP.exe" />
     <Content Include="*.dll" />
     <Content Include="cores\**\*" />
+    <Content Include="retroarch.cfg" />
     <Content Include="system\scummvm.zip" />
   </ItemGroup>
   <ItemGroup>

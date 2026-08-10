@@ -5,9 +5,9 @@
 - ScummVM deve COEXISTIR com ele. NÃO desinstalar, atualizar, substituir ou tocar em qualquer instalação existente de RetroArch.
 - Nosso app usa protocolo próprio `scummvm-core:` — NÃO registrar/colidir com `retroarch:`.
 - LocalState é scoped por package (148433a7 vs 1e4cf179) — nunca escrever no do RetroArch.
-- `scripts/deploy-xbox.ps1` NÃO pode conter lógica de uninstall de RetroArch existente.
 
-## Deploy Xbox (WDP)
+## Deploy Xbox (WDP) — manual via Device Portal
+- `scripts/deploy-xbox.ps1` foi REMOVIDO (não funcionava). Deploy é manual pela Device Portal do Xbox. Qualquer script novo de deploy NUNCA pode conter lógica de uninstall de RetroArch existente.
 - Endpoint: HTTPS `https://<ip>:11443` (porta 11443, NÃO 10343).
 - Auth: `Authorization: Basic base64(user:pass)`.
 - CSRF: primeiro GET `/api/os/info` devolve `Set-Cookie: CSRF-Token=...`; todo POST/DELETE precisa header `X-CSRF-Token: <token>` + `-b <cookiejar>`.

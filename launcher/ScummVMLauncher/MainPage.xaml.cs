@@ -144,6 +144,10 @@ namespace ScummVMLauncher
             LocalPath = ApplicationData.Current.LocalFolder.Path;
             LogPath = Path.Combine(LocalPath, "launcher.log");
             Log("=== ScummVM launcher started ===");
+            var pv = Package.Current.Id.Version;
+            Log("Package: " + Package.Current.Id.Name + " v" + pv.Major + "." + pv.Minor + "." + pv.Build + "." + pv.Revision);
+            LogInstalledPayload();
+            LogRetroArchProcesses("startup");
             CreditStoryboard.Begin();
 
             try
@@ -177,17 +181,31 @@ namespace ScummVMLauncher
                 " -L cores\\scummvm_libretro.dll" +
                 "&launchOnExit=scummvm-launcher:?cmd=exit");
             Log("URI: " + uri);
-            var ok = await Launcher.LaunchUriAsync(uri);
-            Log("LaunchUriAsync ok=" + ok);
-
-            if (ok)
+            bool ok = false;
+            string launchError = null;
+            try
             {
+                LogRetroArchProcesses("before LaunchUriAsync");
+                ok = await Launcher.LaunchUriAsync(uri);
+            }
+            catch (Exception ex)
+            {
+                launchError = ex.ToString();
+                Log("LaunchUriAsync THREW: " + ex);
+            }
+            Log("LaunchUriAsync ok=" + ok);
+            LogRetroArchProcesses("after LaunchUriAsync");
+
+            if (ok || launchError != null)
+            {
+                Log("Waiting for RetroArch to start...");
                 await PollRetroArchLog();
+                Log("Launcher exiting (Application.Current.Exit).");
                 Application.Current.Exit();
             }
             else
             {
-                Log("ERROR: failed to open scummvm-core (RetroArch not registered?).");
+                Log("ERROR: failed to open scummvm-core (RetroArch not registered?). ok=" + ok);
                 SetStatus("RetroArch ScummVM not found.");
             }
         }
@@ -195,17 +213,107 @@ namespace ScummVMLauncher
         private static async System.Threading.Tasks.Task PollRetroArchLog()
         {
             string raLog = Path.Combine(LocalPath, "retroarch.log");
+            bool existed = File.Exists(raLog);
+            long lastLen = existed ? new FileInfo(raLog).Length : 0;
+            Log("Polling retroarch.log (exists=" + existed + ", len=" + lastLen + ")...");
             for (int i = 0; i < 20; i++)
             {
                 await System.Threading.Tasks.Task.Delay(500);
                 if (File.Exists(raLog))
                 {
                     var fi = new FileInfo(raLog);
-                    Log("retroarch.log detected (" + fi.Length + " bytes, mtime " + fi.LastWriteTime.ToString("HH:mm:ss") + ").");
-                    return;
+                    if (fi.Length > lastLen)
+                    {
+                        Log("retroarch.log grew (" + lastLen + " -> " + fi.Length + " bytes, mtime " + fi.LastWriteTime.ToString("HH:mm:ss") + ").");
+                        DumpRetroArchTail();
+                        return;
+                    }
                 }
             }
-            Log("retroarch.log did not appear within 10s.");
+            Log("retroarch.log did not appear/grow within 10s.");
+            DumpRetroArchTail();
+        }
+
+        private static void DumpRetroArchTail()
+        {
+            string raLog = Path.Combine(LocalPath, "retroarch.log");
+            try
+            {
+                if (!File.Exists(raLog))
+                {
+                    Log("(no retroarch.log to dump)");
+                    return;
+                }
+                string[] lines = File.ReadAllLines(raLog);
+                Log("--- retroarch.log tail (" + lines.Length + " lines) ---");
+                for (int i = Math.Max(0, lines.Length - 25); i < lines.Length; i++)
+                    Log("RA| " + lines[i]);
+                Log("--- end retroarch.log tail ---");
+            }
+            catch (Exception ex)
+            {
+                Log("tail dump failed: " + ex.Message);
+            }
+        }
+
+        private static void LogInstalledPayload()
+        {
+            try
+            {
+                string root = Package.Current.InstalledLocation.Path;
+                string exe = System.IO.Path.Combine(root, "RetroArch-msvcUWP.exe");
+                if (File.Exists(exe))
+                {
+                    var fi = new FileInfo(exe);
+                    Log("Payload: RetroArch-msvcUWP.exe = " + fi.Length + " bytes");
+                }
+                else
+                    Log("Payload: RetroArch-msvcUWP.exe MISSING at " + exe);
+                string core = System.IO.Path.Combine(root, "cores", "scummvm_libretro.dll");
+                if (File.Exists(core))
+                {
+                    var fi = new FileInfo(core);
+                    using (var sha = System.Security.Cryptography.SHA1.Create())
+                    using (var fs = File.OpenRead(core))
+                    {
+                        byte[] h = sha.ComputeHash(fs);
+                        Log("Payload: scummvm_libretro.dll = " + fi.Length + " bytes sha1=" + BitConverter.ToString(h).Replace("-", "").Substring(0, 16));
+                    }
+                }
+                else
+                    Log("Payload: scummvm_libretro.dll MISSING at " + core);
+            }
+            catch (Exception ex)
+            {
+                Log("Payload fingerprint FAILED: " + ex.Message);
+            }
+        }
+
+        private static void LogRetroArchProcesses(string phase)
+        {
+            try
+            {
+                int n = 0;
+                foreach (var p in Windows.System.Diagnostics.ProcessDiagnosticInfo.GetForProcesses())
+                {
+                    string name = "";
+                    try { name = p.ExecutableFileName ?? ""; } catch { }
+                    if (name.IndexOf("RetroArch", StringComparison.OrdinalIgnoreCase) < 0 && p.ProcessId != 0)
+                        continue;
+                    string ws = "";
+                    try { ws = " wsMB=" + Math.Round(p.MemoryUsage.GetReport().WorkingSetSizeInBytes / 1048576.0, 1); } catch { }
+                    string st = "";
+                    try { st = " start=" + p.ProcessStartTime.LocalDateTime.ToString("HH:mm:ss"); } catch { }
+                    Log("RA processes (" + phase + "): pid=" + p.ProcessId + ws + st + " (" + name + ")");
+                    n++;
+                }
+                if (n == 0)
+                    Log("RA processes (" + phase + "): none");
+            }
+            catch (Exception ex)
+            {
+                Log("RA process check failed (" + phase + "): " + ex.Message);
+            }
         }
 
         private static void Bootstrap()
@@ -280,82 +388,31 @@ namespace ScummVMLauncher
             try
             {
                 string cfg = Path.Combine(LocalPath, "retroarch.cfg");
+                string src = Path.Combine(Package.Current.InstalledLocation.Path, "retroarch.cfg");
 
-                string sysDir = Path.Combine(LocalPath, "system");
-
-                // Keys guaranteed in the config. "false" avoids the RGUI menu when
-                // the core shuts down (load_dummy_on_core_shutdown=true loads the
-                // dummy core and opens the menu) and disables the OSD toast.
-                // video_shader_enable=false neutralizes any shader persisted from a
-                // prior session; video_smooth=true keeps bilinear filtering for the
-                // ScummVM core.
-                var desired = new Dictionary<string, string>
+                if (!File.Exists(src))
                 {
-                    { "video_driver", "d3d11" },
-                    { "load_dummy_on_core_shutdown", "false" },
-                    { "video_font_enable", "false" },
-                    { "video_shader_enable", "false" },
-                    { "video_smooth", "true" }
-                };
-
-                if (File.Exists(cfg))
-                {
-                    // RA may persist "gl" in the config (save-on-suspend with the
-                    // GL/HW core active). A stale gl driver after core unload =
-                    // menu crash (null call). Force d3d11 for the menu, as on Xbox.
-                    var lines = File.ReadAllLines(cfg).ToList();
-                    bool changed = false;
-                    foreach (var kv in desired)
-                    {
-                        bool found = false;
-                        for (int i = 0; i < lines.Count; i++)
-                        {
-                            if (lines[i].TrimStart().StartsWith(kv.Key))
-                            {
-                                found = true;
-                                if (!lines[i].Contains("\"" + kv.Value + "\""))
-                                {
-                                    lines[i] = kv.Key + " = \"" + kv.Value + "\"";
-                                    changed = true;
-                                    Log("retroarch.cfg: " + kv.Key + " forced to " + kv.Value + ".");
-                                }
-                                break;
-                            }
-                        }
-                        if (!found)
-                        {
-                            lines.Add(kv.Key + " = \"" + kv.Value + "\"");
-                            changed = true;
-                            Log("retroarch.cfg: " + kv.Key + "=" + kv.Value + " added.");
-                        }
-                    }
-                    if (changed)
-                    {
-                        File.WriteAllLines(cfg, lines);
-                        Log("retroarch.cfg updated.");
-                    }
-                    else
-                    {
-                        Log("retroarch.cfg already exists and is consistent; kept.");
-                    }
+                    Log("ERROR: bundled retroarch.cfg MISSING at " + src);
                     return;
                 }
 
-                string content =
-                    "menu_driver = \"rgui\"\n" +
-                    "log_to_file = \"true\"\n" +
-                    "log_dir = \"" + LocalPath.Replace('\\', '/') + "\"\n" +
-                    "system_directory = \"" + sysDir.Replace('\\', '/') + "\"\n" +
-                    "video_driver = \"d3d11\"\n" +
-                    "load_dummy_on_core_shutdown = \"false\"\n" +
-                    "video_font_enable = \"false\"\n" +
-                    "video_shader_enable = \"false\"\n" +
-                    "video_smooth = \"true\"\n";
-                File.WriteAllText(cfg, content);
-                Log("retroarch.cfg pre-configured (rgui, log_dir, system_dir, video_driver=d3d11, load_dummy_on_core_shutdown=false, video_font_enable=false, video_shader_enable=false, video_smooth=true).");
-                Log("Contents:");
-                foreach (string line in File.ReadAllLines(cfg))
-                    Log("  " + line);
+                var srcInfo = new FileInfo(src);
+                if (File.Exists(cfg))
+                {
+                    var oldInfo = new FileInfo(cfg);
+                    Log("retroarch.cfg already present (" + oldInfo.Length + " bytes); not re-seeding.");
+                    return;
+                }
+                Log("retroarch.cfg missing; seeding bundled config (" + srcInfo.Length + " bytes).");
+
+                File.Copy(src, cfg, true);
+
+                using (var sha = System.Security.Cryptography.SHA1.Create())
+                using (var fs = File.OpenRead(cfg))
+                {
+                    byte[] h = sha.ComputeHash(fs);
+                    Log("retroarch.cfg seeded: " + srcInfo.Length + " bytes sha1=" + BitConverter.ToString(h).Replace("-", "").Substring(0, 16));
+                }
             }
             catch (Exception ex)
             {

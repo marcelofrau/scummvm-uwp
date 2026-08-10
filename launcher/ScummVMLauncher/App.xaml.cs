@@ -11,6 +11,32 @@ namespace ScummVMLauncher
         public App()
         {
             InitializeComponent();
+            UnhandledException += OnUnhandledException;
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += OnUnobservedTask;
+        }
+
+        private static string CrashLogPath()
+        {
+            try { return System.IO.Path.Combine(Windows.Storage.ApplicationData.Current.LocalFolder.Path, "launcher.log"); }
+            catch { return null; }
+        }
+
+        private static void CrashLog(string msg)
+        {
+            string path = CrashLogPath();
+            if (path == null) return;
+            try { System.IO.File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss.fff ") + "[crash] " + msg + Environment.NewLine); } catch { }
+        }
+
+        private void OnUnhandledException(object sender, Windows.UI.Xaml.UnhandledExceptionEventArgs e)
+        {
+            CrashLog("UnhandledException: " + e.Exception);
+        }
+
+        private void OnUnobservedTask(object sender, System.Threading.Tasks.UnobservedTaskExceptionEventArgs e)
+        {
+            CrashLog("UnobservedTaskException: " + e.Exception);
+            e.SetObserved();
         }
 
         protected override void OnLaunched(LaunchActivatedEventArgs e)
