@@ -174,6 +174,31 @@ namespace ScummVMLauncher
             _quotesActive = false;
             SeedRetroArchConfig();
 
+            bool raReal = await System.Threading.Tasks.Task.Run(() => IsRealRetroArchInstalled());
+            if (raReal)
+            {
+                SetStatus("RetroArch found...");
+                Log("Real RetroArch installed; trying it first.");
+                var realUri = new Uri(
+                    "retroarch:?cmd=retroarch -v -L cores\\scummvm_libretro.dll" +
+                    "&launchOnExit=scummvm-launcher:?cmd=exit");
+                Log("URI (real RA): " + realUri);
+
+                bool realOk = await LaunchWithRetry(realUri, 4, useBundled: false);
+                if (realOk)
+                {
+                    Log("Started via real RetroArch; exiting launcher.");
+                    Application.Current.Exit();
+                    return;
+                }
+                Log("Real RetroArch path failed; falling back to bundled shell.");
+                SetStatus("Retrying with bundled engine...");
+            }
+            else
+            {
+                Log("Real RetroArch not installed; using bundled shell.");
+            }
+
             SetStatus("Starting ScummVM...");
             Log("Launching scummvm-core: protocol...");
             string logFile = Path.Combine(LocalPath, "retroarch.log").Replace('\\', '/');
@@ -183,7 +208,7 @@ namespace ScummVMLauncher
                 "&launchOnExit=scummvm-launcher:?cmd=exit");
             Log("URI: " + uri);
 
-            bool launchStarted = await LaunchWithRetry(uri, 4);
+            bool launchStarted = await LaunchWithRetry(uri, 4, useBundled: true);
 
             if (launchStarted)
             {
@@ -197,11 +222,11 @@ namespace ScummVMLauncher
             }
         }
 
-        private async System.Threading.Tasks.Task<bool> LaunchWithRetry(Uri uri, int maxAttempts)
+        private async System.Threading.Tasks.Task<bool> LaunchWithRetry(Uri uri, int maxAttempts, bool useBundled)
         {
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                Log("=== Activation attempt " + attempt + "/" + maxAttempts + " ===");
+                Log("=== Activation attempt " + attempt + "/" + maxAttempts + " (" + (useBundled ? "bundled" : "real RetroArch") + ") ===");
 
                 bool raAlive = HasRetroArchProcess();
                 SetStatus("Attempt " + attempt + "/" + maxAttempts + " - checking RetroArch...");
@@ -213,11 +238,12 @@ namespace ScummVMLauncher
                     // guard in uwp_main.cpp). Force it to exit so the next
                     // activation re-inits with our cmd.
                     Log("RA still running; sending forceExit.");
-                    await ForceExitRetroArch();
+                    await ForceExitRetroArch(useBundled);
                     await WaitForRetroArchExit(TimeSpan.FromSeconds(8));
                 }
 
-                RotateLog(Path.Combine(LocalPath, "retroarch.log"), 3);
+                if (useBundled)
+                    RotateLog(Path.Combine(LocalPath, "retroarch.log"), 3);
 
                 string support = await QueryProtocolSupport(uri);
                 Log("Protocol support: " + support);
@@ -239,8 +265,8 @@ namespace ScummVMLauncher
 
                 if (ok || launchError != null)
                 {
-                    bool grew = await PollRetroArchLog();
-                    if (grew)
+                    bool up = useBundled ? await PollRetroArchLog() : await PollRetroArchProcess();
+                    if (up)
                     {
                         Log("RetroArch is up. Launch succeeded on attempt " + attempt + ".");
                         return true;
@@ -274,12 +300,13 @@ namespace ScummVMLauncher
             return false;
         }
 
-        private static async System.Threading.Tasks.Task ForceExitRetroArch()
+        private static async System.Threading.Tasks.Task ForceExitRetroArch(bool useBundled)
         {
             try
             {
-                var forceUri = new Uri("scummvm-core:?forceExit");
-                Log("Sending forceExit...");
+                string scheme = useBundled ? "scummvm-core" : "retroarch";
+                var forceUri = new Uri(scheme + ":?forceExit");
+                Log("Sending forceExit (" + scheme + ":)...");
                 bool ok = await Launcher.LaunchUriAsync(forceUri);
                 Log("forceExit ok=" + ok);
             }
@@ -287,6 +314,52 @@ namespace ScummVMLauncher
             {
                 Log("forceExit THREW: " + ex.Message);
             }
+        }
+
+        private static async System.Threading.Tasks.Task<bool> PollRetroArchProcess()
+        {
+            Log("Polling RetroArch process (real RA path)...");
+            for (int i = 0; i < 20; i++)
+            {
+                await System.Threading.Tasks.Task.Delay(500);
+                if (HasRetroArchProcess())
+                {
+                    Log("RetroArch process is up (after " + ((i + 1) * 500) + "ms).");
+                    return true;
+                }
+            }
+            Log("RetroArch process did not appear within 10s.");
+            return false;
+        }
+
+        private static bool IsRealRetroArchInstalled()
+        {
+            try
+            {
+                var pm = new Windows.Management.Deployment.PackageManager();
+                var packages = pm.FindPackages();
+                foreach (var pkg in packages)
+                {
+                    string name = "";
+                    try { name = pkg.Id.Name ?? ""; } catch { }
+                    string family = "";
+                    try { family = pkg.Id.FamilyName ?? ""; } catch { }
+                    bool isRetroArch = name.IndexOf("RetroArch", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                       family.StartsWith("1e4cf179", StringComparison.OrdinalIgnoreCase);
+                    if (isRetroArch)
+                    {
+                        Log("Real RetroArch found: name=" + name + " family=" + family +
+                            " ver=" + pkg.Id.Version.Major + "." + pkg.Id.Version.Minor + "." + pkg.Id.Version.Build);
+                        return true;
+                    }
+                }
+                Log("Real RetroArch NOT installed.");
+            }
+            catch (Exception ex)
+            {
+                Log("Package enumeration FAILED: " + ex.Message);
+            }
+            return false;
         }
 
         private static async System.Threading.Tasks.Task WaitForRetroArchExit(TimeSpan timeout)

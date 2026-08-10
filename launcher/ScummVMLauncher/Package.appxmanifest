@@ -10,12 +10,12 @@
   <Identity
     Name="148433a7-fd05-4815-9e57-fa81cb66d285"
     Publisher="CN=Marcelo Frau"
-    Version="2026.3.1.12" />
+    Version="2026.3.1.14" />
 
   <mp:PhoneIdentity PhoneProductId="148433a7-fd05-4815-9e57-fa81cb66d285" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>ScummVM</DisplayName>
+    <DisplayName>ScummVM UWP Launcher</DisplayName>
     <PublisherDisplayName>Marcelo Frau</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -35,10 +35,10 @@
       Executable="ScummVMLauncher.exe"
       EntryPoint="ScummVMLauncher.App">
         <uap:VisualElements
-          DisplayName="ScummVM"
+          DisplayName="ScummVM UWP Launcher"
           Square150x150Logo="Assets\Square150x150Logo.png"
           Square44x44Logo="Assets\Square44x44Logo.png"
-          Description="ScummVM on Xbox Series."
+          Description="ScummVM adventure games on Xbox, via RetroArch."
           BackgroundColor="transparent">
           <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
                            Square71x71Logo="Assets\Square71x71Logo.png"

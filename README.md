@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/social-preview.jpg" alt="ScummVM — Xbox / Windows UWP Port" width="800"/>
+  <img src="docs/social-preview.jpg" alt="ScummVM UWP Launcher — Xbox / Windows" width="800"/>
 </p>
 
 <p align="center">
-  <strong>Adventure games on Windows and Xbox — ScummVM, no RetroArch frontend, no fuss.</strong>
+  <strong>Adventure games on Windows and Xbox — ScummVM's own UI, powered by RetroArch underneath.</strong>
 </p>
 
 <p align="center">
@@ -18,19 +18,25 @@
 
 ## What is this?
 
-A standalone UWP port of [ScummVM](https://www.scummvm.org/) — the classic
-point-and-click adventure engine (Monkey Island, Broken Sword, Discworld, Kyrandia,
-Simon the Sorcerer…). Runs natively on **Windows 11** and **Xbox Series (Dev Mode)**.
+**ScummVM UWP Launcher** is a UWP launcher for the classic point-and-click
+adventure engine [ScummVM](https://www.scummvm.org/) (Monkey Island, Broken
+Sword, Discworld, Kyrandia, Simon the Sorcerer…), built for **Windows 11** and
+**Xbox Series (Dev Mode)**.
 
-It bundles the **ScummVM libretro core** (the same binary used in RetroArch) and
-hosts it in a hidden **RetroArch UWP shell** that provides rendering, audio, and
-input. On top sits a thin **C# launcher** that owns the whole experience: branded
-splash, first-run bootstrap (unpacks the data files + themes), config seeding, and
-a clean handoff that drops you straight back to the dashboard when you quit.
+Underneath it uses **RetroArch**: if a real RetroArch is installed on the
+console, the launcher hands off to it (so you keep every RetroArch feature and
+update); otherwise it falls back to a bundled RetroArch UWP shell that provides
+rendering, audio, and input. The ScummVM core itself is the **official libretro
+core maintained by the ScummVM team** — the same binary RetroArch ships.
 
-There is **no RetroArch frontend** in the picture — no RGUI menu, no OSD toasts.
-Quitting a game returns you to the console UI. The app even **coexists** with a
-regular RetroArch install on the same console (separate package, separate
+On top sits a thin **C# launcher** that owns the experience: branded splash,
+first-run bootstrap (unpacks the data files + themes), config seeding, and a
+clean handoff that drops you straight back to the dashboard when you quit.
+
+What RetroArch's UI hides, this exposes: ScummVM's **own launcher GUI and full
+options** (gamepad-driven), rendered directly into the RetroArch video output.
+No RGUI menu, no OSD toasts — just ScummVM. The app coexists with a regular
+RetroArch install on the same console (separate package, separate
 `scummvm-core:` protocol — it never touches the `retroarch:` one).
 
 ---
@@ -97,6 +103,11 @@ Sorcerer, and many more — see the full list on
 
 Connect a gamepad or use a USB keyboard + mouse. See [Controls](#controls).
 
+> If you already have **RetroArch** installed on the console, the launcher will
+> use it (first install the ScummVM core inside RetroArch via its core
+> downloader). If not, the bundled shell runs automatically — no separate
+> RetroArch installation needed either way.
+
 ---
 
 ## Controls
@@ -133,8 +144,9 @@ behavior options.
 
 | Feature | Status |
 |---------|--------|
-| ScummVM 2026.3.1 core (libretro buildbot binary) | ✅ Shipped |
-| RetroArch UWP shell: video / audio / input / pacing | ✅ Done |
+| ScummVM 2026.3.1 core (official libretro buildbot binary) | ✅ Shipped |
+| Uses installed RetroArch when present (keeps RA features/updates) | ✅ Done |
+| Fallback to bundled RetroArch UWP shell when RA not installed | ✅ Done |
 | Thin C# launcher: splash + first-run bootstrap + handoff | ✅ Done |
 | Clean quit to dashboard (no RGUI, no OSD toast) | ✅ Done |
 | Data files + patched themes bundled (`system/scummvm.zip`, versioned) | ✅ Done |
@@ -262,7 +274,14 @@ protocols:
    `system/scummvm.zip` into `LocalState\system` (idempotent via the
    `.scummvm-ready` flag), writes a minimal `scummvm.ini`
    (`gui_theme=scummremastered`), seeds `retroarch.cfg`, holds a 4-second
-   splash floor, then fires `scummvm-core:` at RetroArch.
+   splash floor, then picks the RetroArch to run:
+   - If a **real RetroArch** is installed (protocol `retroarch:` available),
+     it hands off there first — `retroarch:?cmd=retroarch -v
+     -L cores\scummvm_libretro.dll&launchOnExit=scummvm-launcher:?cmd=exit` —
+     keeping every RetroArch feature and update. The ScummVM core must already
+     be installed inside that RetroArch (via its core downloader).
+   - Otherwise it falls back to the **bundled shell** (`scummvm-core:`
+     protocol), which runs the same core inside the hidden RetroArch UWP shell.
 
 2. **Shell (`RetroArch-msvcUWP.exe`)** — hidden app (`AppListEntry="none"`).
    Parses the protocol, runs `rarch_main` with `-L cores\scummvm_libretro.dll`,
@@ -276,6 +295,13 @@ protocols:
    `scummvm-launcher:?cmd=exit`, and the launcher calls
    `Application.Current.Exit()` → dashboard. `video_font_enable=false` keeps the
    OSD toast from flashing during shutdown.
+
+> **Why RetroArch underneath?** The ScummVM libretro core is maintained by the
+> ScummVM team itself — using it means every engine fix and update arrives for
+> free, and RetroArch's own features (core updater, cloud saves, achievements,
+> …) stay available when a real RetroArch is present. This project is a shell
+> that exposes ScummVM's own UI and options — which RetroArch's frontend keeps
+> hidden — behind a console-friendly launcher.
 
 ### Key Technical Decisions
 

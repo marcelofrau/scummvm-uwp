@@ -130,13 +130,25 @@ sequenceDiagram
     L->>S: write .scummvm-ready flag
     L-->>L: hold until ≥ 4 s total elapsed (masks boot latency)
     L->>S: SeedRetroArchConfig() — force d3d11 / no-dummy / no-font
-    L->>RA: LaunchUriAsync("scummvm-core:?cmd=retroarch -v ...&launchOnExit=scummvm-launcher:?cmd=exit")
-    RA->>RA: ParseProtocolArgs → rarch_main(argc, argv)
-    RA->>C: retro_load_game(NULL)
-    C-->>RA: ScummVM launcher GUI (rendered via video_cb)
-    L->>L: poll retroarch.log (≤ 10 s), then Application.Current.Exit()
+    L->>L: IsRealRetroArchInstalled()? (PackageManager, family 1e4cf179-…)
+    alt real RetroArch installed
+        L->>RA: LaunchUriAsync("retroarch:?cmd=retroarch -v -L cores\\scummvm_libretro.dll&launchOnExit=scummvm-launcher:?cmd=exit")
+        RA->>C: retro_load_game(NULL)  (core must be installed inside RA)
+        Note over L: success = RetroArch process alive (no log access)
+    else bundled shell
+        L->>RA: LaunchUriAsync("scummvm-core:?cmd=retroarch -v ...&launchOnExit=scummvm-launcher:?cmd=exit")
+        RA->>RA: ParseProtocolArgs → rarch_main(argc, argv)
+        RA->>C: retro_load_game(NULL)
+        C-->>RA: ScummVM launcher GUI (rendered via video_cb)
+        L->>L: poll retroarch.log (≤ 10 s)
+    end
+    L->>L: on success → Application.Current.Exit()
     Note over L: launcher now dead; RetroArch is foreground
 ```
+
+If the real-RetroArch handoff fails all retries (e.g. the core isn't installed
+inside it), the launcher **falls back** to the bundled `scummvm-core:` path
+before giving up.
 
 ### 4.1 Bootstrap details
 
@@ -319,8 +331,10 @@ relevant for portal-side scripting:
    `{ AppId: "App", PackageFamilyName: <pkg> }` (JSON).
 6. **Coexistence rule:** the user has a real RetroArch install
    (`1e4cf179-…`). Deploy only *reports* it — it never uninstalls,
-   upgrades, or touches it. ScummVM coexists as a separate package and never
-   registers the `retroarch:` protocol.
+   upgrades, or touches it. The launcher may *use* it when present (see §4:
+   it hands off via the standard `retroarch:` protocol; the ScummVM core must
+   be installed inside that RetroArch). It never registers or overrides the
+   `retroarch:` protocol itself.
 
 ### 10.2 Versioning & CI/CD
 
@@ -357,7 +371,9 @@ The release zip intentionally contains **only** the appx + dependencies — no
 ## 11. Debugging / observability
 
 - Launcher logs: `OutputDebugStringA` + append to `LocalState\launcher.log`.
-- RetroArch logs: launched with `-v --log-file=<LocalState>/retroarch.log`
+- Bundled-shell logs: launched with `-v --log-file=<LocalState>/retroarch.log`
   (log_dir/log_to_file also set in the seeded config).
-- The launcher polls for `retroarch.log` after handoff as a liveness check
-  before exiting.
+- The launcher polls for `retroarch.log` after the bundled handoff as a
+  liveness check before exiting. For the real-RetroArch handoff (whose log
+  lives in RetroArch's own sandbox, unreadable from here) the liveness check
+  is instead "RetroArch process is alive".

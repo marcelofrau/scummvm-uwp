@@ -1,4 +1,4 @@
-# ScummVM UWP 2026.3.1.3
+# ScummVM UWP Launcher 2026.3.1.x
 
 **The classic adventure engine, on Xbox and Windows.**
 
@@ -8,12 +8,20 @@ and the Fate of Atlantis, Broken Sword, Simon the Sorcerer, the Kyrandia
 trilogy and many more — right on your Xbox console or Windows machine, with
 full gamepad support.
 
-This is the first public release of the standalone UWP port.
+ScummVM UWP Launcher exposes ScummVM's own launcher GUI and full options,
+powered by RetroArch underneath. Uses an installed RetroArch when present;
+falls back to a bundled shell otherwise.
 
 ## What's New
 
-- **Standalone app** — runs the ScummVM 2026.3.1 libretro core inside a
-  hidden RetroArch UWP shell; no separate RetroArch installation needed.
+- **Uses your RetroArch when installed** — the launcher hands off to a real
+  RetroArch on the console when it's present, so you keep every RetroArch
+  feature and update (core updater, cloud saves, achievements, …).
+- **Bundled fallback shell** — no RetroArch installed? The launcher runs the
+  same official ScummVM libretro core inside a hidden RetroArch UWP shell; no
+  separate RetroArch installation needed.
+- **Official ScummVM core** — the libretro core maintained by the ScummVM team
+  itself; every engine fix and update arrives for free.
 - **Gamepad-first UX** — every menu and game is fully playable with the Xbox
   controller (see Controls below).
 - **First-run bootstrap** — the launcher unpacks the datafiles + patched
@@ -35,15 +43,19 @@ This is the first public release of the standalone UWP port.
 
 ## Installation
 
-1. Download `scummvm-uwp_2026.3.1.3_x64.zip`.
+1. Download `scummvm-uwp_2026.3.1.x_x64.zip`.
 2. Extract it.
 3. Install the `.appx`:
    - **Windows** — sideloading requires Developer Mode
      (Settings → Privacy & security → For developers).
    - **Xbox** — enable Developer Mode + Device Portal, then install through
      the portal (upload the `.appx` in **Apps** → **Add** → **Deploy**).
-4. Launch **ScummVM UWP**, wait for the first-run setup, add your game folder
-   and play.
+4. Launch **ScummVM UWP Launcher**, wait for the first-run setup, add your game
+   folder and play.
+
+If you want to use your own RetroArch instead of the bundled shell, install
+the ScummVM core inside RetroArch via its core downloader — the launcher will
+pick it up automatically.
 
 ## Controls (quick reference)
 
@@ -73,8 +85,11 @@ bindings. Full reference and cursor options: [docs/CONTROLS.md](docs/CONTROLS.md
 - **x64 only** — ARM/ARM64/x86 not supported (Xbox Series is x64).
 - Save / state via ScummVM's own save system; RetroArch save states and
   rewind are not supported by the core.
-- The app coexists with a real RetroArch install on the same Xbox — it uses
-  its own `scummvm-core:` protocol and never touches RetroArch's package.
+- The app coexists with a real RetroArch install on the same Xbox — when
+  present, the launcher uses it via the standard `retroarch:` protocol (the
+  ScummVM core must be installed inside it); otherwise it falls back to its
+  bundled shell. It never registers or overrides the `retroarch:` protocol
+  itself.
 
 ## Links
 
