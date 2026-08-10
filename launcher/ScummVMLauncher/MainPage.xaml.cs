@@ -143,6 +143,7 @@ namespace ScummVMLauncher
         {
             LocalPath = ApplicationData.Current.LocalFolder.Path;
             LogPath = Path.Combine(LocalPath, "launcher.log");
+            RotateLog(LogPath, 3);
             Log("=== ScummVM launcher started ===");
             var pv = Package.Current.Id.Version;
             Log("Package: " + Package.Current.Id.Name + " v" + pv.Major + "." + pv.Minor + "." + pv.Build + "." + pv.Revision);
@@ -181,36 +182,142 @@ namespace ScummVMLauncher
                 " -L cores\\scummvm_libretro.dll" +
                 "&launchOnExit=scummvm-launcher:?cmd=exit");
             Log("URI: " + uri);
-            bool ok = false;
-            string launchError = null;
-            try
-            {
-                LogRetroArchProcesses("before LaunchUriAsync");
-                ok = await Launcher.LaunchUriAsync(uri);
-            }
-            catch (Exception ex)
-            {
-                launchError = ex.ToString();
-                Log("LaunchUriAsync THREW: " + ex);
-            }
-            Log("LaunchUriAsync ok=" + ok);
-            LogRetroArchProcesses("after LaunchUriAsync");
 
-            if (ok || launchError != null)
+            bool launchStarted = await LaunchWithRetry(uri, 4);
+
+            if (launchStarted)
             {
-                Log("Waiting for RetroArch to start...");
-                await PollRetroArchLog();
                 Log("Launcher exiting (Application.Current.Exit).");
                 Application.Current.Exit();
             }
             else
             {
-                Log("ERROR: failed to open scummvm-core (RetroArch not registered?). ok=" + ok);
-                SetStatus("RetroArch ScummVM not found.");
+                Log("ERROR: failed to start ScummVM after retries.");
+                SetStatus("Could not start ScummVM.");
             }
         }
 
-        private static async System.Threading.Tasks.Task PollRetroArchLog()
+        private async System.Threading.Tasks.Task<bool> LaunchWithRetry(Uri uri, int maxAttempts)
+        {
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                Log("=== Activation attempt " + attempt + "/" + maxAttempts + " ===");
+
+                bool raAlive = HasRetroArchProcess();
+                SetStatus("Attempt " + attempt + "/" + maxAttempts + " - checking RetroArch...");
+                Log("RA alive before attempt: " + raAlive);
+
+                if (raAlive)
+                {
+                    // If RA is already running, its cmd is ignored (m_initialized
+                    // guard in uwp_main.cpp). Force it to exit so the next
+                    // activation re-inits with our cmd.
+                    Log("RA still running; sending forceExit.");
+                    await ForceExitRetroArch();
+                    await WaitForRetroArchExit(TimeSpan.FromSeconds(8));
+                }
+
+                RotateLog(Path.Combine(LocalPath, "retroarch.log"), 3);
+
+                string support = await QueryProtocolSupport(uri);
+                Log("Protocol support: " + support);
+
+                LogRetroArchProcesses("before LaunchUriAsync");
+                bool ok = false;
+                string launchError = null;
+                try
+                {
+                    ok = await Launcher.LaunchUriAsync(uri);
+                }
+                catch (Exception ex)
+                {
+                    launchError = ex.ToString();
+                    Log("LaunchUriAsync THREW: " + ex);
+                }
+                Log("LaunchUriAsync ok=" + ok + (launchError != null ? " err=" + launchError : ""));
+                LogRetroArchProcesses("after LaunchUriAsync");
+
+                if (ok || launchError != null)
+                {
+                    bool grew = await PollRetroArchLog();
+                    if (grew)
+                    {
+                        Log("RetroArch is up. Launch succeeded on attempt " + attempt + ".");
+                        return true;
+                    }
+                }
+
+                Log("Attempt " + attempt + " did not produce a running RetroArch; " +
+                    (attempt < maxAttempts ? "retrying." : "giving up."));
+                SetStatus("Retrying... (" + attempt + "/" + maxAttempts + ")");
+                await System.Threading.Tasks.Task.Delay(1500);
+            }
+            return false;
+        }
+
+        private static bool HasRetroArchProcess()
+        {
+            try
+            {
+                foreach (var p in Windows.System.Diagnostics.ProcessDiagnosticInfo.GetForProcesses())
+                {
+                    string name = "";
+                    try { name = p.ExecutableFileName ?? ""; } catch { }
+                    if (name.IndexOf("RetroArch", StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("HasRetroArchProcess FAILED: " + ex.Message);
+            }
+            return false;
+        }
+
+        private static async System.Threading.Tasks.Task ForceExitRetroArch()
+        {
+            try
+            {
+                var forceUri = new Uri("scummvm-core:?forceExit");
+                Log("Sending forceExit...");
+                bool ok = await Launcher.LaunchUriAsync(forceUri);
+                Log("forceExit ok=" + ok);
+            }
+            catch (Exception ex)
+            {
+                Log("forceExit THREW: " + ex.Message);
+            }
+        }
+
+        private static async System.Threading.Tasks.Task WaitForRetroArchExit(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!HasRetroArchProcess())
+                {
+                    Log("RetroArch exited after forceExit.");
+                    return;
+                }
+                await System.Threading.Tasks.Task.Delay(500);
+            }
+            Log("RetroArch did not exit within timeout; proceeding anyway.");
+        }
+
+        private static async System.Threading.Tasks.Task<string> QueryProtocolSupport(Uri uri)
+        {
+            try
+            {
+                var status = await Launcher.QueryUriSupportAsync(uri, LaunchQuerySupportType.Uri);
+                return status.ToString();
+            }
+            catch (Exception ex)
+            {
+                return "query FAILED: " + ex.Message;
+            }
+        }
+
+        private static async System.Threading.Tasks.Task<bool> PollRetroArchLog()
         {
             string raLog = Path.Combine(LocalPath, "retroarch.log");
             bool existed = File.Exists(raLog);
@@ -226,12 +333,13 @@ namespace ScummVMLauncher
                     {
                         Log("retroarch.log grew (" + lastLen + " -> " + fi.Length + " bytes, mtime " + fi.LastWriteTime.ToString("HH:mm:ss") + ").");
                         DumpRetroArchTail();
-                        return;
+                        return true;
                     }
                 }
             }
             Log("retroarch.log did not appear/grow within 10s.");
             DumpRetroArchTail();
+            return false;
         }
 
         private static void DumpRetroArchTail()
@@ -417,6 +525,30 @@ namespace ScummVMLauncher
             catch (Exception ex)
             {
                 Log("ERROR pre-configuring retroarch.cfg: " + ex.Message);
+            }
+        }
+
+        private static void RotateLog(string path, int keep)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return;
+                for (int i = keep - 1; i >= 1; i--)
+                {
+                    string from = path + "." + i;
+                    string to = path + "." + (i + 1);
+                    if (File.Exists(to))
+                        File.Delete(to);
+                    if (File.Exists(from))
+                        File.Move(from, to);
+                }
+                File.Move(path, path + ".1");
+                Log("Rotated " + path + " -> .1 (kept " + keep + " generations).");
+            }
+            catch (Exception ex)
+            {
+                Log("RotateLog failed for " + path + ": " + ex.Message);
             }
         }
 
