@@ -35,6 +35,37 @@ regular RetroArch install on the same console (separate package, separate
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/snapshots/boot-screen.png" alt="Boot splash" width="420"/>
+  <img src="docs/snapshots/main-gui.png" alt="ScummVM launcher GUI" width="420"/>
+</p>
+<p align="center">
+  <img src="docs/snapshots/the-dig-gameplay.png" alt="The Dig gameplay" width="420"/>
+  <img src="docs/snapshots/full-throttle-gameplay-1.png" alt="Full Throttle gameplay" width="420"/>
+</p>
+
+<details>
+  <summary>More screenshots</summary>
+
+<p align="center">
+  <img src="docs/snapshots/game-options.png" alt="Game options" width="420"/>
+  <img src="docs/snapshots/global-options.png" alt="Global options" width="420"/>
+</p>
+<p align="center">
+  <img src="docs/snapshots/the-dig-gameplay2.png" alt="The Dig gameplay (2)" width="420"/>
+  <img src="docs/snapshots/full-throttle-gameplay-2.png" alt="Full Throttle gameplay (2)" width="420"/>
+</p>
+<p align="center">
+  <img src="docs/snapshots/full-throttle-gameplay-3.png" alt="Full Throttle gameplay (3)" width="420"/>
+  <img src="docs/snapshots/full-throttle-gameplay-4.png" alt="Full Throttle gameplay (4)" width="420"/>
+</p>
+
+</details>
+
+---
+
 ## Quick Start
 
 ### 1. Install
