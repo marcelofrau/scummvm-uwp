@@ -19,6 +19,10 @@ jobs:
           fetch-depth: 0
           lfs: true
 
+      - name: Fetch runtime payload (RetroArch shell + ScummVM core)
+        shell: pwsh
+        run: ./scripts/fetch-payload.ps1 -ForkTag 08-10-2026
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
