@@ -358,8 +358,6 @@ protocols:
 |---------|------|---------|
 | [ScummVM](https://github.com/scummvm/scummvm) | The adventure game engine itself. Shipped as the libretro buildbot binary + included as submodule at `extern/scummvm`. | GPL-3.0 |
 | [RetroArch UWP (XboxEmulationHub fork)](https://github.com/XboxEmulationHub/RetroArch) | UWP shell: rendering, audio, input, frame pacing. Hidden app, no frontend UI. Submodule at `extern/retroarch`. | GPL-3.0 |
-| [dosbox-uwp](https://github.com/marcelofrau/dosbox-uwp) | Reference UWP libretro shell + deploy tooling this repo was modeled on | GPL-2.0 |
-| [Numix icon theme](https://github.com/numixproject/numix-icon-theme) | Launcher UI icons | GPL-3.0 |
 
 ---
 
@@ -369,5 +367,3 @@ protocols:
 
 - ScummVM core: [GPL-3.0](https://github.com/scummvm/scummvm)
 - RetroArch shell: [XboxEmulationHub/RetroArch](https://github.com/XboxEmulationHub/RetroArch) (GPL-3.0)
-- Launcher icons: [Numix icon theme](https://github.com/numixproject/numix-icon-theme) (GPL-3.0)
-- Shell base: [dosbox-uwp](https://github.com/marcelofrau/dosbox-uwp) (GPL-2.0)
