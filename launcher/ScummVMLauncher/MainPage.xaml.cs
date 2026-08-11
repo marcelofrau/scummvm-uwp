@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using Windows.ApplicationModel;
 using Windows.Storage;
 using Windows.System;
+using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Media.Animation;
@@ -149,7 +150,9 @@ namespace ScummVMLauncher
             Log("Package: " + Package.Current.Id.Name + " v" + pv.Major + "." + pv.Minor + "." + pv.Build + "." + pv.Revision);
             LogInstalledPayload();
             LogRetroArchProcesses("startup");
+            LogBootstrapDiagnostics();
             CreditStoryboard.Begin();
+            SetStateIndicator("starting", "#455A64", "state: starting");
 
             try
             {
@@ -174,32 +177,79 @@ namespace ScummVMLauncher
             _quotesActive = false;
             SeedRetroArchConfig();
 
-            bool raReal = await System.Threading.Tasks.Task.Run(() => IsRealRetroArchInstalled());
+            Log("Drive check: E: exists=" + FromAppFile.DriveExists('E') + " allDrives=[" + FromAppFile.DriveList() + "]");
+            bool raReal = await IsRealRetroArchInstalled();
             if (raReal)
             {
                 SetStatus("RetroArch found...");
                 Log("Real RetroArch installed; trying it first.");
-                var realUri = new Uri(
-                    "retroarch:?cmd=retroarch -v -L cores\\scummvm_libretro.dll" +
-                    "&launchOnExit=scummvm-launcher:?cmd=exit");
-                Log("URI (real RA): " + realUri);
 
-                bool realOk = await LaunchWithRetry(realUri, 4, useBundled: false);
-                if (realOk)
+                bool eDrive = FromAppFile.DriveExists('E');
+                Log("Drive E: present: " + eDrive);
+
+                if (eDrive)
                 {
-                    Log("Started via real RetroArch; exiting launcher.");
-                    Application.Current.Exit();
-                    return;
+                    string ver = pv.Major + "." + pv.Minor + "." + pv.Build + "." + pv.Revision;
+                    Log("Staging to E:\\ started (app version " + ver + ").");
+                    SetStateIndicator("staging", "#F9A825", "state: staging to E:\\ (yellow)");
+                    SetProgressPanel(true);
+                    bool staged = false;
+                    var stageStart = DateTime.UtcNow;
+                    try
+                    {
+                        staged = await System.Threading.Tasks.Task.Run(() => StageToE(ver));
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("StageToE THREW: " + ex);
+                        staged = false;
+                    }
+                    Log("Staging result: staged=" + staged + " elapsed=" + (DateTime.UtcNow - stageStart).TotalSeconds + "s");
+                    SetProgressPanel(false);
+
+                    if (staged)
+                    {
+                        Log("E:\\ staging ok; launching real RetroArch with our cfg.");
+                        SetStateIndicator("real", "#7B1FA2", "state: real RetroArch (purple)");
+                        var realUri = new Uri(
+                            "retroarch:?cmd=retroarch -v -L scummvm_libretro.dll" +
+                            " -c E:\\scummvm\\retroarch.cfg" +
+                            "&launchOnExit=scummvm-launcher:?cmd=exit");
+                        Log("URI (real RA): " + realUri);
+
+                        bool realOk = await LaunchWithRetry(realUri, 4, useBundled: false);
+                        Log("Real RetroArch launch result: realOk=" + realOk);
+                        if (realOk)
+                        {
+                            Log("Started via real RetroArch; exiting launcher.");
+                            Application.Current.Exit();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Log("E:\\ staging failed; falling back to bundled shell.");
+                        SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
+                    }
                 }
+                else
+                {
+                    Log("Drive E: missing; falling back to bundled shell.");
+                    SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
+                }
+
                 Log("Real RetroArch path failed; falling back to bundled shell.");
+                SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
                 SetStatus("Retrying with bundled engine...");
             }
             else
             {
                 Log("Real RetroArch not installed; using bundled shell.");
+                SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
             }
 
             SetStatus("Starting ScummVM...");
+            SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
             Log("Launching scummvm-core: protocol...");
             string logFile = Path.Combine(LocalPath, "retroarch.log").Replace('\\', '/');
             var uri = new Uri(
@@ -332,33 +382,57 @@ namespace ScummVMLauncher
             return false;
         }
 
-        private static bool IsRealRetroArchInstalled()
+        private static async System.Threading.Tasks.Task<bool> IsRealRetroArchInstalled()
         {
+            // Protocol probe: the real RetroArch registers "retroarch:". No
+            // packageQuery needed (FindPackages() is denied on Xbox dev mode).
+            try
+            {
+                var probe = new Uri("retroarch:?cmd=probe");
+                var status = await Launcher.QueryUriSupportAsync(probe, LaunchQuerySupportType.Uri);
+                Log("retroarch: protocol support = " + status);
+                if (status == LaunchQuerySupportStatus.Available)
+                {
+                    Log("Real RetroArch INSTALLED (retroarch: registered).");
+                    return true;
+                }
+                Log("retroarch: protocol not available (" + status + ").");
+            }
+            catch (Exception ex)
+            {
+                Log("retroarch: protocol probe FAILED: " + ex.Message + " (0x" + ex.HResult.ToString("X8") + ")");
+            }
+
+            // Fallback: PackageManager enumeration (needs packageQuery; works on some platforms).
             try
             {
                 var pm = new Windows.Management.Deployment.PackageManager();
                 var packages = pm.FindPackages();
+                int count = 0;
                 foreach (var pkg in packages)
                 {
+                    count++;
                     string name = "";
                     try { name = pkg.Id.Name ?? ""; } catch { }
                     string family = "";
                     try { family = pkg.Id.FamilyName ?? ""; } catch { }
-                    bool isRetroArch = name.IndexOf("RetroArch", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                       family.StartsWith("1e4cf179", StringComparison.OrdinalIgnoreCase);
-                    if (isRetroArch)
+                    if (count <= 30)
+                        Log("Package #" + count + ": name=" + name + " family=" + family);
+                    if (name.IndexOf("RetroArch", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        family.StartsWith("1e4cf179", StringComparison.OrdinalIgnoreCase))
                     {
-                        Log("Real RetroArch found: name=" + name + " family=" + family +
-                            " ver=" + pkg.Id.Version.Major + "." + pkg.Id.Version.Minor + "." + pkg.Id.Version.Build);
+                        Log("Real RetroArch found via PackageManager: name=" + name + " family=" + family);
                         return true;
                     }
                 }
-                Log("Real RetroArch NOT installed.");
+                Log("Package enumeration done: total=" + count + " (no RetroArch).");
             }
             catch (Exception ex)
             {
-                Log("Package enumeration FAILED: " + ex.Message);
+                Log("Package enumeration FAILED: " + ex.Message + " (0x" + ex.HResult.ToString("X8") + ")");
             }
+
+            Log("Real RetroArch NOT installed.");
             return false;
         }
 
@@ -437,6 +511,89 @@ namespace ScummVMLauncher
             }
         }
 
+        private static void LogBootstrapDiagnostics()
+        {
+            try
+            {
+                var ver = Package.Current.Id.Version;
+                string root = Package.Current.InstalledLocation.Path;
+                Log("--- bootstrap diagnostics ---");
+                Log("App: " + Package.Current.Id.Name + " family=" + Package.Current.Id.FamilyName);
+                Log("Version: " + ver.Major + "." + ver.Minor + "." + ver.Build + "." + ver.Revision);
+                Log("Architecture: " + Package.Current.Id.Architecture);
+                Log("InstalledLocation: " + root);
+                Log("LocalState: " + LocalPath);
+                Log("LogPath: " + LogPath);
+
+                string exe = System.IO.Path.Combine(root, "RetroArch-msvcUWP.exe");
+                if (File.Exists(exe))
+                    Log("Bundled exe: " + new FileInfo(exe).Length + " bytes");
+                else
+                    Log("Bundled exe: MISSING");
+                string core = System.IO.Path.Combine(root, "cores", "scummvm_libretro.dll");
+                if (File.Exists(core))
+                    Log("Bundled core: " + new FileInfo(core).Length + " bytes");
+                else
+                    Log("Bundled core: MISSING");
+                string cfg = System.IO.Path.Combine(root, "retroarch.cfg");
+                if (File.Exists(cfg))
+                    Log("Bundled retroarch.cfg: " + new FileInfo(cfg).Length + " bytes");
+                else
+                    Log("Bundled retroarch.cfg: MISSING");
+                string zip = System.IO.Path.Combine(root, "system", "scummvm.zip");
+                if (File.Exists(zip))
+                    Log("Bundled scummvm.zip: " + new FileInfo(zip).Length + " bytes");
+                else
+                    Log("Bundled scummvm.zip: MISSING");
+
+                string sysFlag = System.IO.Path.Combine(LocalPath, "system", ".scummvm-ready");
+                Log("LocalState: system/.scummvm-ready present=" + File.Exists(sysFlag));
+                string localCfg = System.IO.Path.Combine(LocalPath, "retroarch.cfg");
+                if (File.Exists(localCfg))
+                    Log("LocalState: retroarch.cfg present (" + new FileInfo(localCfg).Length + " bytes)");
+                else
+                    Log("LocalState: retroarch.cfg absent (will be seeded)");
+                string raLog = System.IO.Path.Combine(LocalPath, "retroarch.log");
+                if (File.Exists(raLog))
+                    Log("LocalState: retroarch.log present (" + new FileInfo(raLog).Length + " bytes)");
+                else
+                    Log("LocalState: retroarch.log absent");
+
+                Log("OS: " + Windows.System.Profile.AnalyticsInfo.VersionInfo.DeviceFamily);
+                Log("Drives: [" + FromAppFile.DriveList() + "]");
+                Log("--- end bootstrap diagnostics ---");
+            }
+            catch (Exception ex)
+            {
+                Log("Bootstrap diagnostics FAILED: " + ex.Message);
+            }
+        }
+
+        private void SetStateIndicator(string state, string colorHex, string tooltip)
+        {
+            Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                if (StateIndicator == null)
+                    return;
+                try
+                {
+                    string hex = colorHex.TrimStart('#');
+                    StateIndicator.Background = new Windows.UI.Xaml.Media.SolidColorBrush(
+                        Windows.UI.Color.FromArgb(
+                            0xFF,
+                            Convert.ToByte(hex.Substring(0, 2), 16),
+                            Convert.ToByte(hex.Substring(2, 2), 16),
+                            Convert.ToByte(hex.Substring(4, 2), 16)));
+                }
+                catch { }
+                try
+                {
+                    Windows.UI.Xaml.Controls.ToolTipService.SetToolTip(StateIndicator, tooltip);
+                }
+                catch { }
+            });
+        }
+
         private static void LogInstalledPayload()
         {
             try
@@ -495,6 +652,195 @@ namespace ScummVMLauncher
             {
                 Log("RA process check failed (" + phase + "): " + ex.Message);
             }
+        }
+
+        private void SetProgress(double fraction, string message)
+        {
+            Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                ProgressBarControl.Value = Math.Max(0, Math.Min(100, fraction * 100));
+                if (message != null)
+                    ProgressText.Text = message;
+            });
+        }
+
+        private void SetProgressPanel(bool visible)
+        {
+            Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+            {
+                ProgressPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            });
+        }
+
+        private bool StageToE(string version)
+        {
+            if (!FromAppFile.DriveExists('E'))
+            {
+                Log("StageToE: E: drive not present; cannot stage.");
+                return false;
+            }
+
+            string eSys = @"E:\scummvm\system";
+            string flag = eSys + @"\.scummvm-ready";
+            Log("StageToE: eSys=" + eSys + " version=" + version);
+
+            bool flagExists = false;
+            string flagContent = null;
+            try
+            {
+                flagExists = FromAppFile.Exists(flag);
+                if (flagExists)
+                    flagContent = FromAppFile.ReadAllText(flag);
+            }
+            catch (Exception ex)
+            {
+                Log("StageToE: flag read FAILED: " + ex.Message);
+            }
+            Log("StageToE: flag exists=" + flagExists + " content='" + (flagContent ?? "(null)") + "'");
+
+            if (flagExists && flagContent == version)
+            {
+                Log("E:\\ staging ok (version matches); skip.");
+                return true;
+            }
+
+            Log("E:\\ staging: version differs; re-staging.");
+            SetProgress(0.0, "Preparing E:\\scummvm...");
+
+            try
+            {
+                FromAppFile.DeleteTree(eSys);
+                Log("StageToE: DeleteTree(E:\\scummvm\\system) ok.");
+            }
+            catch (Exception ex)
+            {
+                Log("DeleteTree E:\\ failed: " + ex.Message);
+                return false;
+            }
+            try
+            {
+                FromAppFile.CreateDirectory(eSys);
+                Log("StageToE: CreateDirectory(E:\\scummvm\\system) ok.");
+            }
+            catch (Exception ex)
+            {
+                Log("CreateDirectory E:\\ failed: " + ex.Message);
+                return false;
+            }
+
+            string zipPath = Path.Combine(Package.Current.InstalledLocation.Path, "system", "scummvm.zip");
+            if (!File.Exists(zipPath))
+            {
+                Log("ERROR: scummvm.zip missing at " + zipPath);
+                return false;
+            }
+            var zipInfo = new FileInfo(zipPath);
+            Log("StageToE: scummvm.zip = " + zipInfo.Length + " bytes at " + zipPath);
+
+            SetProgress(0.05, "Extracting ScummVM to E:\\...");
+            int totalFiles = 0;
+            int totalDirs = 0;
+            long totalBytes = 0;
+            try
+            {
+                using (var zip = ZipFile.OpenRead(zipPath))
+                {
+                    int total = zip.Entries.Count;
+                    int i = 0;
+                    Log("StageToE: zip has " + total + " entries");
+                    foreach (var entry in zip.Entries)
+                    {
+                        i++;
+                        string target = eSys + "\\" + entry.FullName;
+                        if (entry.FullName.EndsWith("/", StringComparison.Ordinal))
+                        {
+                            FromAppFile.CreateDirectory(target);
+                            totalDirs++;
+                        }
+                        else
+                        {
+                            string dir = Path.GetDirectoryName(target);
+                            FromAppFile.CreateDirectory(dir);
+                            using (var src = entry.Open())
+                                FromAppFile.WriteFromStream(target, src);
+                            totalFiles++;
+                            totalBytes += entry.Length;
+                        }
+                        if (i % 20 == 0)
+                            SetProgress(0.05 + 0.80 * i / (double)total, "Extracting... " + i + "/" + total);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("E:\\ extraction FAILED: " + ex);
+                return false;
+            }
+            Log("StageToE: extraction done, files=" + totalFiles + " dirs=" + totalDirs + " bytes=" + totalBytes);
+
+            SetProgress(0.9, "Writing scummvm.ini...");
+            try
+            {
+                FromAppFile.WriteAllText(eSys + @"\scummvm.ini",
+                    "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
+                Log("StageToE: scummvm.ini written.");
+            }
+            catch (Exception ex)
+            {
+                Log("scummvm.ini write failed: " + ex.Message);
+                return false;
+            }
+
+            try
+            {
+                WriteCfgWithSystemDir(@"E:\scummvm\retroarch.cfg",
+                    Path.Combine(Package.Current.InstalledLocation.Path, "retroarch.cfg"),
+                    @"E:\scummvm\system");
+                Log("StageToE: E:\\scummvm\\retroarch.cfg written.");
+            }
+            catch (Exception ex)
+            {
+                Log("retroarch.cfg staging failed: " + ex.Message);
+                return false;
+            }
+
+            SetProgress(1.0, "Done.");
+            try
+            {
+                FromAppFile.WriteAllText(flag, version);
+                Log("StageToE: flag written (version " + version + ").");
+            }
+            catch (Exception ex)
+            {
+                Log("flag write failed: " + ex.Message);
+                return false;
+            }
+
+            Log("E:\\ staging complete (version " + version + ").");
+            return true;
+        }
+
+        private static void WriteCfgWithSystemDir(string destCfg, string bundledCfg, string systemDir)
+        {
+            string[] lines = File.ReadAllLines(bundledCfg);
+            bool found = false;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (lines[i].TrimStart().StartsWith("libretro_system_directory", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[i] = "libretro_system_directory = \"" + systemDir + "\"";
+                    found = true;
+                    Log("WriteCfgWithSystemDir: replaced existing libretro_system_directory (line " + (i + 1) + ")");
+                    break;
+                }
+            }
+            string joined = string.Join(Environment.NewLine, lines);
+            if (!found)
+            {
+                joined += Environment.NewLine + "libretro_system_directory = \"" + systemDir + "\"";
+                Log("WriteCfgWithSystemDir: appended libretro_system_directory (bundled had " + lines.Length + " lines)");
+            }
+            FromAppFile.WriteAllText(destCfg, joined);
         }
 
         private static void Bootstrap()
@@ -627,7 +973,7 @@ namespace ScummVMLauncher
 
         private static void Log(string msg)
         {
-            string line = DateTime.Now.ToString("HH:mm:ss.fff ") + msg;
+            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + msg;
             OutputDebugStringA("[launcher] " + line);
             try
             {

@@ -44,5 +44,36 @@
                    HorizontalAlignment="Center"
                    VerticalAlignment="Bottom"
                    Margin="0,0,0,70"/>
+
+        <StackPanel x:Name="ProgressPanel"
+                    Visibility="Collapsed"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Bottom"
+                    Margin="0,0,0,130">
+            <ProgressBar x:Name="ProgressBarControl"
+                         Minimum="0"
+                         Maximum="100"
+                         Width="620"
+                         Height="12"/>
+            <TextBlock x:Name="ProgressText"
+                       Foreground="#333333"
+                       FontFamily="Courier New"
+                       FontSize="18"
+                       TextAlignment="Center"
+                       Margin="0,8,0,0"/>
+        </StackPanel>
+
+        <Border x:Name="StateIndicator"
+                Width="14"
+                Height="14"
+                CornerRadius="3"
+                Background="#455A64"
+                BorderBrush="#000000"
+                BorderThickness="1"
+                Opacity="0.85"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,16,16,0"
+                ToolTipService.ToolTip="state: starting"/>
     </Grid>
 </Page>
