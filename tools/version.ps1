@@ -33,7 +33,8 @@ $buildNum = 0
 if (Test-Path $counterPath) {
     $buildNum = [int](Get-Content $counterPath -Raw)
 }
-if (-not $DontIncrement) { $buildNum++ }
+# CI release builds from a tag: pin the version, do not bump.
+if (-not $DontIncrement -and -not $env:SCUMMVM_DONT_INCREMENT) { $buildNum++ }
 [System.IO.File]::WriteAllText($counterPath, "$buildNum", $utf8)
 
 $fullVersion = "$base.$buildNum"

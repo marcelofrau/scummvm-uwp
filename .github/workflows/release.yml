@@ -49,6 +49,10 @@ jobs:
 
       - name: Build
         shell: pwsh
+        env:
+          # Release builds pin the version from the checked-out tag/commit:
+          # version.ps1 (PreBuildEvent) will NOT bump build_counter.
+          SCUMMVM_DONT_INCREMENT: 1
         run: ./scripts/build.ps1 -Configuration Release -Platform x64
 
       - name: Read actual version
@@ -76,6 +80,15 @@ jobs:
           }
           $zipName = "scummvm-uwp_${ver}_x64.zip"
           if (-not (Test-Path $zipName)) { Write-Error "Zip not found: $zipName"; exit 1 }
+          # Assertive check: when triggered by a tag, the built version MUST match it.
+          if ($env:GITHUB_REF -match '^refs/tags/v(\d+\.\d+\.\d+\.\d+)$') {
+            $tagVer = $Matches[1]
+            if ($ver -ne $tagVer) {
+              Write-Error "Version mismatch: built $ver but tag is $tagVer. Refusing to release."
+              exit 1
+            }
+            Write-Host "Version matches tag v$ver"
+          }
           echo "version=$ver" >> $env:GITHUB_OUTPUT
           echo "tag=v$ver" >> $env:GITHUB_OUTPUT
           echo "zip=$zipName" >> $env:GITHUB_OUTPUT
