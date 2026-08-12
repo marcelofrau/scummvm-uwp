@@ -23,6 +23,9 @@ Win32/
 
 # VS cache files
 *.ipch
+
+# Tooling / MCP artifacts
+.codedev-mcp/
 *.db
 *.db-journal
 *.db-wal
