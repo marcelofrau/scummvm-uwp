@@ -22,7 +22,7 @@
                    Opacity="0"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Bottom"
-                   Margin="0,0,0,36">
+                   Margin="0,0,0,48">
             <TextBlock.Resources>
                 <Storyboard x:Name="CreditStoryboard">
                     <DoubleAnimationUsingKeyFrames Storyboard.TargetName="PortCredit"
@@ -40,21 +40,22 @@
                    Text="Preparing ScummVM..."
                    Foreground="#333333"
                    FontFamily="Courier New"
-                   FontSize="26"
+                   FontSize="20"
                    HorizontalAlignment="Center"
                    VerticalAlignment="Bottom"
-                   Margin="0,0,0,70"/>
+                   Margin="0,0,0,78"/>
 
         <StackPanel x:Name="ProgressPanel"
                     Visibility="Collapsed"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Bottom"
-                    Margin="0,0,0,130">
+                    Margin="0,0,0,14">
             <ProgressBar x:Name="ProgressBarControl"
                          Minimum="0"
                          Maximum="100"
                          Width="620"
-                         Height="12"/>
+                         Height="12"
+                         Foreground="#946CA5"/>
             <TextBlock x:Name="ProgressText"
                        Foreground="#333333"
                        FontFamily="Courier New"

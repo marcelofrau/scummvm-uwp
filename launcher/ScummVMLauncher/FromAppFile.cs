@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -28,6 +29,8 @@ namespace ScummVMLauncher
         private const uint FILE_ATTRIBUTE_NORMAL = 0x80;
         private const uint FILE_FLAG_SEQUENTIAL_SCAN = 0x08000000;
         private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
+        private const uint FILE_ATTRIBUTE_READONLY = 0x1;
+        private const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
         private const int GetFileExInfoStandard = 0;
         private const uint INVALID_HANDLE = 0xFFFFFFFF;
         private const int ERROR_ALREADY_EXISTS = 183;
@@ -55,9 +58,12 @@ namespace ScummVMLauncher
         private struct WIN32_FIND_DATA
         {
             public uint dwFileAttributes;
-            public long ftCreationTime;
-            public long ftLastAccessTime;
-            public long ftLastWriteTime;
+            public uint ftCreationTimeLow;
+            public uint ftCreationTimeHigh;
+            public uint ftLastAccessTimeLow;
+            public uint ftLastAccessTimeHigh;
+            public uint ftLastWriteTimeLow;
+            public uint ftLastWriteTimeHigh;
             public uint nFileSizeHigh;
             public uint nFileSizeLow;
             public uint dwReserved0;
@@ -90,6 +96,9 @@ namespace ScummVMLauncher
 
         [DllImport("api-ms-win-core-file-fromapp-l1-1-0.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool RemoveDirectoryFromAppW(string lpPathName);
+
+        [DllImport("api-ms-win-core-file-fromapp-l1-1-0.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool SetFileAttributesFromAppW(string lpFileName, uint dwFileAttributes);
 
         [DllImport("api-ms-win-core-file-fromapp-l1-1-0.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr FindFirstFileExFromAppW(
@@ -260,47 +269,24 @@ namespace ScummVMLauncher
                 throw new IOException("DeleteFileFromAppW failed (" + Marshal.GetLastWin32Error() + "): " + path);
         }
 
-        /// <summary>Recursively deletes a directory tree on an arbitrary path.</summary>
-        public static void DeleteTree(string dir)
+        /// <summary>Lists a directory's immediate entries on an arbitrary path.
+        /// Entries are formatted "[dir] name" / "[file] name".</summary>
+        public static List<string> ListEntries(string dir)
         {
-            DeleteTreeRecursive(dir);
-            if (Exists(dir) && !RemoveDirectoryFromAppW(dir))
-                throw new IOException("RemoveDirectoryFromAppW failed (" + Marshal.GetLastWin32Error() + "): " + dir);
-        }
-
-        // ─────────────────────────────────────────────────────────────────────────
-        //  Internals
-        // ─────────────────────────────────────────────────────────────────────────
-
-        private static void DeleteTreeRecursive(string dir)
-        {
+            var result = new List<string>();
             WIN32_FIND_DATA findData = new WIN32_FIND_DATA();
             IntPtr hFind = FindFirstFileExFromAppW(
                 dir + "\\*", GetFileExInfoStandard, out findData, 0, IntPtr.Zero, 0);
             if (hFind == InvalidHandle)
-            {
-                int err = Marshal.GetLastWin32Error();
-                if (err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND)
-                    throw new IOException("FindFirstFileExFromAppW failed (" + err + "): " + dir);
-                return;
-            }
-
+                throw new IOException("FindFirstFileExFromAppW list failed (" + Marshal.GetLastWin32Error() + "): " + dir);
             try
             {
                 do
                 {
                     if (findData.cFileName == "." || findData.cFileName == "..")
                         continue;
-                    string full = dir + "\\" + findData.cFileName;
-                    if ((findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
-                    {
-                        DeleteTreeRecursive(full);
-                        RemoveDirectoryFromAppW(full);
-                    }
-                    else
-                    {
-                        DeleteFileFromAppW(full);
-                    }
+                    bool isDir = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                    result.Add((isDir ? "[dir] " : "[file]") + findData.cFileName);
                 }
                 while (FindNextFileW(hFind, out findData));
             }
@@ -308,6 +294,15 @@ namespace ScummVMLauncher
             {
                 FindClose(hFind);
             }
+            return result;
+        }
+
+        public static bool IsReparsePoint(string path)
+        {
+            WIN32_FILE_ATTRIBUTE_DATA data;
+            if (!GetFileAttributesExFromAppW(path, GetFileExInfoStandard, out data))
+                return false;
+            return (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
         }
 
         // ─────────────────────────────────────────────────────────────────────────

@@ -144,8 +144,10 @@ namespace ScummVMLauncher
         {
             LocalPath = ApplicationData.Current.LocalFolder.Path;
             LogPath = Path.Combine(LocalPath, "launcher.log");
+            TryUseELogs();
             RotateLog(LogPath, 3);
             Log("=== ScummVM launcher started ===");
+            Log("launcher.log path: " + LogPath);
             var pv = Package.Current.Id.Version;
             Log("Package: " + Package.Current.Id.Name + " v" + pv.Major + "." + pv.Minor + "." + pv.Build + "." + pv.Revision);
             LogInstalledPayload();
@@ -209,21 +211,36 @@ namespace ScummVMLauncher
 
                     if (staged)
                     {
-                        Log("E:\\ staging ok; launching real RetroArch with our cfg.");
-                        SetStateIndicator("real", "#7B1FA2", "state: real RetroArch (purple)");
-                        var realUri = new Uri(
-                            "retroarch:?cmd=retroarch -v -L scummvm_libretro.dll" +
-                            " -c E:\\scummvm\\retroarch.cfg" +
-                            "&launchOnExit=scummvm-launcher:?cmd=exit");
-                        Log("URI (real RA): " + realUri);
-
-                        bool realOk = await LaunchWithRetry(realUri, 4, useBundled: false);
-                        Log("Real RetroArch launch result: realOk=" + realOk);
-                        if (realOk)
+                        bool? lastCore = CoreLastRunResolved();
+                        Log("Last real-RA core resolution: " + (lastCore.HasValue ? lastCore.ToString() : "unknown"));
+                        if (lastCore == false)
                         {
-                            Log("Started via real RetroArch; exiting launcher.");
-                            Application.Current.Exit();
-                            return;
+                            Log("Real RetroArch lacks the scummvm core (from last run's log); falling back to bundled.");
+                            SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
+                        }
+                        else
+                        {
+                            Log("E:\\ staging ok; launching real RetroArch with its own core.");
+                            SetStateIndicator("real", "#7B1FA2", "state: real RetroArch (purple)");
+                            string realLog = @"E:\scummvm\logs\retroarch-real.log".Replace('\\', '/');
+                            var realUri = new Uri(
+                                "retroarch:?cmd=retroarch -v --log-file=" + realLog +
+                                " -L scummvm_libretro.dll" +
+                                " -c E:\\scummvm\\retroarch.cfg" +
+                                "&launchOnExit=scummvm-launcher:?cmd=exit");
+                            Log("OUR LocalState: " + LocalPath);
+                            Log("OUR package family: " + Package.Current.Id.FamilyName);
+                            Log("Staged system dir E:\\scummvm\\system exists: " + FromAppFile.Exists(@"E:\scummvm\system"));
+                            Log("URI (real RA): " + realUri);
+
+                            bool realOk = await LaunchWithRetry(realUri, 4, useBundled: false);
+                            Log("Real RetroArch launch result: realOk=" + realOk);
+                            if (realOk)
+                            {
+                                Log("Started via real RetroArch; exiting launcher.");
+                                Application.Current.Exit();
+                                return;
+                            }
                         }
                     }
                     else
@@ -251,7 +268,7 @@ namespace ScummVMLauncher
             SetStatus("Starting ScummVM...");
             SetStateIndicator("fallback", "#1B5E20", "state: fallback bundled (dark green)");
             Log("Launching scummvm-core: protocol...");
-            string logFile = Path.Combine(LocalPath, "retroarch.log").Replace('\\', '/');
+            string logFile = ResolveRetroLogPath().Replace('\\', '/');
             var uri = new Uri(
                 "scummvm-core:?cmd=retroarch -v --log-file=" + logFile +
                 " -L cores\\scummvm_libretro.dll" +
@@ -293,7 +310,9 @@ namespace ScummVMLauncher
                 }
 
                 if (useBundled)
-                    RotateLog(Path.Combine(LocalPath, "retroarch.log"), 3);
+                    RotateLog(ResolveRetroLogPath(), 3);
+                else
+                    RotateLog(@"E:\scummvm\logs\retroarch-real.log", 3);
 
                 string support = await QueryProtocolSupport(uri);
                 Log("Protocol support: " + support);
@@ -681,6 +700,11 @@ namespace ScummVMLauncher
             }
 
             string eSys = @"E:\scummvm\system";
+            if (FromAppFile.IsReparsePoint(eSys))
+            {
+                Log("StageToE: E:\\scummvm\\system is a reparse point/junction; refusing to stage (safety).");
+                return false;
+            }
             string flag = eSys + @"\.scummvm-ready";
             Log("StageToE: eSys=" + eSys + " version=" + version);
 
@@ -705,18 +729,9 @@ namespace ScummVMLauncher
             }
 
             Log("E:\\ staging: version differs; re-staging.");
+            ResetRealCoreMarker();
             SetProgress(0.0, "Preparing E:\\scummvm...");
 
-            try
-            {
-                FromAppFile.DeleteTree(eSys);
-                Log("StageToE: DeleteTree(E:\\scummvm\\system) ok.");
-            }
-            catch (Exception ex)
-            {
-                Log("DeleteTree E:\\ failed: " + ex.Message);
-                return false;
-            }
             try
             {
                 FromAppFile.CreateDirectory(eSys);
@@ -778,12 +793,33 @@ namespace ScummVMLauncher
             }
             Log("StageToE: extraction done, files=" + totalFiles + " dirs=" + totalDirs + " bytes=" + totalBytes);
 
+            Log("StageToE: top-level contents of E:\\scummvm\\system:");
+            try
+            {
+                var entries = FromAppFile.ListEntries(eSys);
+                Log("StageToE: " + entries.Count + " top-level entries");
+                foreach (string entry in entries)
+                    Log("  " + entry);
+            }
+            catch (Exception ex)
+            {
+                Log("StageToE: listing E:\\scummvm\\system FAILED: " + ex.Message);
+            }
+
             SetProgress(0.9, "Writing scummvm.ini...");
             try
             {
-                FromAppFile.WriteAllText(eSys + @"\scummvm.ini",
-                    "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
-                Log("StageToE: scummvm.ini written.");
+                string iniPath = eSys + @"\scummvm.ini";
+                if (FromAppFile.Exists(iniPath))
+                {
+                    Log("StageToE: scummvm.ini already present; keeping user config.");
+                }
+                else
+                {
+                    FromAppFile.WriteAllText(iniPath,
+                        "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
+                    Log("StageToE: scummvm.ini written.");
+                }
             }
             catch (Exception ex)
             {
@@ -795,13 +831,24 @@ namespace ScummVMLauncher
             {
                 WriteCfgWithSystemDir(@"E:\scummvm\retroarch.cfg",
                     Path.Combine(Package.Current.InstalledLocation.Path, "retroarch.cfg"),
-                    @"E:\scummvm\system");
+                    @"E:/scummvm/system");
                 Log("StageToE: E:\\scummvm\\retroarch.cfg written.");
             }
             catch (Exception ex)
             {
                 Log("retroarch.cfg staging failed: " + ex.Message);
                 return false;
+            }
+
+            try
+            {
+                FromAppFile.CreateDirectory(@"E:\scummvm\logs");
+                FromAppFile.Copy(@"E:\scummvm\retroarch.cfg", @"E:\scummvm\logs\retroarch.cfg", true);
+                Log("StageToE: cfg snapshot -> E:\\scummvm\\logs\\retroarch.cfg.");
+            }
+            catch (Exception ex)
+            {
+                Log("cfg snapshot failed: " + ex.Message);
             }
 
             SetProgress(1.0, "Done.");
@@ -826,19 +873,21 @@ namespace ScummVMLauncher
             bool found = false;
             for (int i = 0; i < lines.Length; i++)
             {
-                if (lines[i].TrimStart().StartsWith("libretro_system_directory", StringComparison.OrdinalIgnoreCase))
+                string t = lines[i].TrimStart();
+                if (t.StartsWith("system_directory", StringComparison.OrdinalIgnoreCase) &&
+                    !t.StartsWith("libretro_system_directory", StringComparison.OrdinalIgnoreCase))
                 {
-                    lines[i] = "libretro_system_directory = \"" + systemDir + "\"";
+                    lines[i] = "system_directory = \"" + systemDir + "\"";
                     found = true;
-                    Log("WriteCfgWithSystemDir: replaced existing libretro_system_directory (line " + (i + 1) + ")");
+                    Log("WriteCfgWithSystemDir: replaced system_directory (line " + (i + 1) + ")");
                     break;
                 }
             }
             string joined = string.Join(Environment.NewLine, lines);
             if (!found)
             {
-                joined += Environment.NewLine + "libretro_system_directory = \"" + systemDir + "\"";
-                Log("WriteCfgWithSystemDir: appended libretro_system_directory (bundled had " + lines.Length + " lines)");
+                joined += Environment.NewLine + "system_directory = \"" + systemDir + "\"";
+                Log("WriteCfgWithSystemDir: appended system_directory (bundled had " + lines.Length + " lines)");
             }
             FromAppFile.WriteAllText(destCfg, joined);
         }
@@ -899,10 +948,17 @@ namespace ScummVMLauncher
             Log("Additional themes: classic=" + File.Exists(themeClassic) + " modern=" + File.Exists(themeModern));
 
             string iniPath = Path.Combine(sysDir, "scummvm.ini");
-            File.WriteAllText(
-                iniPath,
-                "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
-            Log("scummvm.ini written: " + iniPath);
+            if (File.Exists(iniPath))
+            {
+                Log("scummvm.ini already present; keeping user config: " + iniPath);
+            }
+            else
+            {
+                File.WriteAllText(
+                    iniPath,
+                    "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
+                Log("scummvm.ini written: " + iniPath);
+            }
             Log("Contents read back:");
             foreach (string line in File.ReadAllLines(iniPath))
                 Log("  " + line);
@@ -928,11 +984,13 @@ namespace ScummVMLauncher
                 {
                     var oldInfo = new FileInfo(cfg);
                     Log("retroarch.cfg already present (" + oldInfo.Length + " bytes); not re-seeding.");
+                    EnsureSystemDirInCfg(cfg, Path.Combine(LocalPath, "system").Replace('\\', '/'));
                     return;
                 }
                 Log("retroarch.cfg missing; seeding bundled config (" + srcInfo.Length + " bytes).");
 
                 File.Copy(src, cfg, true);
+                EnsureSystemDirInCfg(cfg, Path.Combine(LocalPath, "system").Replace('\\', '/'));
 
                 using (var sha = System.Security.Cryptography.SHA1.Create())
                 using (var fs = File.OpenRead(cfg))
@@ -944,6 +1002,94 @@ namespace ScummVMLauncher
             catch (Exception ex)
             {
                 Log("ERROR pre-configuring retroarch.cfg: " + ex.Message);
+            }
+        }
+
+        private static void EnsureSystemDirInCfg(string cfgPath, string systemDir)
+        {
+            string[] lines = File.ReadAllLines(cfgPath);
+            bool found = false;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string t = lines[i].TrimStart();
+                if (t.StartsWith("system_directory", StringComparison.OrdinalIgnoreCase) &&
+                    !t.StartsWith("libretro_system_directory", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[i] = "system_directory = \"" + systemDir + "\"";
+                    found = true;
+                    break;
+                }
+            }
+            string joined = string.Join(Environment.NewLine, lines);
+            if (!found)
+                joined += Environment.NewLine + "system_directory = \"" + systemDir + "\"";
+            File.WriteAllText(cfgPath, joined);
+        }
+
+        private static void TryUseELogs()
+        {
+            if (!FromAppFile.DriveExists('E'))
+                return;
+            try
+            {
+                FromAppFile.CreateDirectory(@"E:\scummvm\logs");
+                LogPath = @"E:\scummvm\logs\launcher.log";
+            }
+            catch
+            {
+                LogPath = Path.Combine(LocalPath, "launcher.log");
+            }
+        }
+
+        private static string ResolveRetroLogPath()
+        {
+            if (FromAppFile.DriveExists('E'))
+            {
+                try
+                {
+                    FromAppFile.CreateDirectory(@"E:\scummvm\logs");
+                    return @"E:\scummvm\logs\retroarch.log";
+                }
+                catch { }
+            }
+            return Path.Combine(LocalPath, "retroarch.log");
+        }
+
+        private static bool? CoreLastRunResolved()
+        {
+            try
+            {
+                string logPath = @"E:\scummvm\logs\retroarch-real.log";
+                if (!FromAppFile.Exists(logPath))
+                    return null;
+                string content = FromAppFile.ReadAllText(logPath);
+                if (content.Length > 200000)
+                    content = content.Substring(content.Length - 200000);
+                int okIdx = content.LastIndexOf("matches core file", StringComparison.Ordinal);
+                int missingIdx = content.LastIndexOf("is not a file, core name or directory", StringComparison.Ordinal);
+                if (okIdx < 0 && missingIdx < 0)
+                    return null;
+                return okIdx > missingIdx;
+            }
+            catch (Exception ex)
+            {
+                Log("CoreLastRunResolved FAILED: " + ex.Message);
+                return null;
+            }
+        }
+
+        private static void ResetRealCoreMarker()
+        {
+            try
+            {
+                string logPath = @"E:\scummvm\logs\retroarch-real.log";
+                if (FromAppFile.Exists(logPath))
+                    FromAppFile.Delete(logPath);
+                Log("StageToE: real-RA core-check marker reset (version changed).");
+            }
+            catch (Exception ex)
+            {
+                Log("ResetRealCoreMarker FAILED: " + ex.Message);
             }
         }
 
@@ -974,7 +1120,7 @@ namespace ScummVMLauncher
         private static void Log(string msg)
         {
             string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff ") + msg;
-            OutputDebugStringA("[launcher] " + line);
+            OutputDebugStringA("[launcher] " + line + Environment.NewLine);
             try
             {
                 lock (LogLock)
