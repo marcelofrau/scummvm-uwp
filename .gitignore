@@ -83,3 +83,8 @@ scummvm_libretro.dll
 # scummvm.zip é VERSIONADO (76MB, contém temas com patch 0001 + data files do core)
 
 session.txt
+
+# Session tooling + scratch screenshots
+.cortexkit/
+docs/snapshots/
+
