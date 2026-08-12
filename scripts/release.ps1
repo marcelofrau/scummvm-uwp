@@ -86,7 +86,7 @@ try {
     Write-Host ''
     Write-Host "Release $tag ready." -ForegroundColor Green
     Write-Host "  appx : $appx"
-    Write-Host "  zip  : $(Join-Path $root "scummvm-uwp_${version}_x64.zip")"
+    Write-Host "  zip  : $(Join-Path (Join-Path $root 'dist') "scummvm-uwp_${version}_x64.zip")"
     Write-Host "  tag  : $tag (local$(if ($NoPush) { '' } else { ' + pushed to origin' }))"
     Write-Host '  Note: the next build will auto-increment to the next version.' -ForegroundColor DarkGray
 }

@@ -49,7 +49,7 @@ Write-Host "Packaged: $dist" -ForegroundColor Green
 
 # Release zip: appx + x64 dependencies only
 $zipName = "scummvm-uwp_${version}_x64.zip"
-$zipPath = Join-Path $root $zipName
+$zipPath = Join-Path $distDir $zipName
 $staging = Join-Path $env:TEMP "scummvm-uwp-dist-${version}"
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $staging | Out-Null

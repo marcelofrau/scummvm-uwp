@@ -79,7 +79,8 @@ jobs:
             Write-Host "Actual version from AppPackages: $ver"
           }
           $zipName = "scummvm-uwp_${ver}_x64.zip"
-          if (-not (Test-Path $zipName)) { Write-Error "Zip not found: $zipName"; exit 1 }
+          $zipPath = "dist/$zipName"
+          if (-not (Test-Path $zipPath)) { Write-Error "Zip not found: $zipPath"; exit 1 }
           # Assertive check: when triggered by a tag, the built version MUST match it.
           if ($env:GITHUB_REF -match '^refs/tags/v(\d+\.\d+\.\d+\.\d+)$') {
             $tagVer = $Matches[1]
@@ -91,7 +92,7 @@ jobs:
           }
           echo "version=$ver" >> $env:GITHUB_OUTPUT
           echo "tag=v$ver" >> $env:GITHUB_OUTPUT
-          echo "zip=$zipName" >> $env:GITHUB_OUTPUT
+          echo "zip=$zipPath" >> $env:GITHUB_OUTPUT
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

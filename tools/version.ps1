@@ -60,3 +60,15 @@ if (Test-Path $appPackagesDir) {
         }
     }
 }
+
+# 6. Prune old dist release zips, keep last 3
+$distDir = Join-Path $root 'dist'
+if (Test-Path $distDir) {
+    $zips = Get-ChildItem $distDir -Filter 'scummvm-uwp_*.zip' -File | Sort-Object LastWriteTime -Descending
+    if ($zips.Count -gt 3) {
+        $zips | Select-Object -Skip 3 | ForEach-Object {
+            Write-Host "[version] Removing old release zip: $($_.Name)"
+            Remove-Item $_.FullName -Force
+        }
+    }
+}
