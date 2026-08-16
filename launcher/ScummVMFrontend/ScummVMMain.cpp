@@ -1,0 +1,359 @@
+#include "pch.h"
+#include "ScummVMMain.h"
+#include "CoreDll.h"
+#include "Bootstrap.h"
+#include "DataPaths.h"
+
+#include <Windows.ApplicationModel.h>
+#include <Windows.UI.Core.h>
+#include <windows.h>
+
+using namespace scummvm_uwp;
+using namespace Windows::ApplicationModel;
+using namespace Windows::System;
+using namespace Windows::UI::Core;
+
+void PatchExitProcessImports(); // App.cpp
+
+static std::wstring InstalledLocationDir()
+{
+    return std::wstring(Package::Current->InstalledLocation->Path->Data());
+}
+
+ScummVMMain::ScummVMMain(const std::shared_ptr<DX::DeviceResources>& deviceResources)
+    : m_deviceResources(deviceResources)
+    , m_clearColor(DirectX::Colors::Black)
+{
+    m_sdlInput = std::make_unique<SdlInput>();
+    m_sdlInput->Initialize();
+
+    m_retroD3D11 = std::make_unique<RetroD3D11Renderer>(deviceResources);
+    m_deviceResources->RegisterDeviceNotify(this);
+
+    CreateWindowSizeDependentResources();
+}
+
+void ScummVMMain::EnsureBoot()
+{
+    if (m_bootStarted)
+        return;
+    m_bootStarted = true;
+
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceFrequency(&m_bootFreq);
+    QueryPerformanceCounter(&t0);
+
+    BootCore();
+
+    QueryPerformanceCounter(&t1);
+    double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / m_bootFreq.QuadPart;
+    spdlog::info("[scummvm-uwp] EnsureBoot: took {:.0f}ms", ms);
+}
+
+ScummVMMain::~ScummVMMain()
+{
+    m_deviceResources->RegisterDeviceNotify(nullptr);
+    if (m_retroCore)
+    {
+        m_retroCore->Shutdown();
+        m_retroCore.reset();
+    }
+    m_xaudio2.reset();
+    CoreDll::Unload();
+}
+
+void ScummVMMain::BootCore()
+{
+    spdlog::info("[scummvm-uwp] --- boot ---");
+
+    Bootstrap::Run();
+
+    // DIAGNOSTIC: nocore.txt in LocalState skips core init/load entirely —
+    // isolates "core kills the process" vs "environment kills the app".
+    if (Bootstrap::FileExistsInLocalState(L"nocore.txt"))
+    {
+        spdlog::warn("[scummvm-uwp] nocore.txt present — skipping core init/load (diagnostic)");
+        m_retroCore = std::make_unique<RetroCore>();
+        m_retroRunning = true;
+        return;
+    }
+
+    m_xaudio2 = std::make_unique<XAudio2Output>();
+    if (!m_xaudio2->Initialize())
+    {
+        spdlog::error("[scummvm-uwp] XAudio2 init FAILED");
+        m_bootFailed = true;
+        return;
+    }
+
+    // DIAGNOSTIC: nload.txt skips LoadGame (InitCore runs) — isolates which
+    // core stage kills the process.
+    if (Bootstrap::FileExistsInLocalState(L"nload.txt"))
+    {
+        spdlog::warn("[scummvm-uwp] nload.txt present — skipping LoadGame (diagnostic)");
+        m_retroRunning = true;
+        return;
+    }
+
+    // No-game boot: the ScummVM core opens its own GUI.
+    std::wstring corePath = InstalledLocationDir() + L"\\cores\\scummvm_libretro.dll";
+    if (!CoreDll::Load(corePath.c_str()))
+    {
+        spdlog::error("[scummvm-uwp] core load FAILED: {}", corePath);
+        m_bootFailed = true;
+        return;
+    }
+    PatchExitProcessImports();
+
+    RetroCore::SetAudioOutput(m_xaudio2.get());
+
+    m_retroCore = std::make_unique<RetroCore>();
+    if (!m_retroCore->Init())
+    {
+        spdlog::error("[scummvm-uwp] RetroCore::Init FAILED");
+        m_bootFailed = true;
+        return;
+    }
+
+    // No-game boot: the ScummVM core opens its own GUI.
+    m_retroCore->LoadGame(L"", {});
+    m_retroRunning = true;
+    spdlog::info("[scummvm-uwp] core booted — ScummVM GUI expected");
+}
+
+void ScummVMMain::CreateWindowSizeDependentResources()
+{
+    m_retroD3D11->CreateDeviceDependentResources();
+}
+
+void ScummVMMain::Update()
+{
+    EnsureBoot();
+
+    static int step = 0;
+    step++;
+    if ((step % 300) == 0)
+        spdlog::info("[scummvm-uwp] Update step {}", step);
+
+    static bool firstUpdate = true;
+    if (firstUpdate)
+    {
+        firstUpdate = false;
+        spdlog::info("[scummvm-uwp] Update() first call");
+    }
+
+    m_timer.Tick([&] { });
+
+    if (m_paused || m_bootFailed || !m_retroCore)
+        return;
+
+    if (m_retroCore->IsShutdownRequested())
+    {
+        spdlog::info("[scummvm-uwp] core requested shutdown → exiting");
+        Windows::ApplicationModel::Core::CoreApplication::Exit();
+        return;
+    }
+
+    m_sdlInput->PollEvents();
+    UpdateRetroPad();
+
+    // Present the newest frame from the core (non-blocking).
+    RetroCore::FrameView frame;
+    if (RetroCore::AcquireFrame(frame))
+    {
+        m_retroD3D11->UpdateVideoFrame(frame.data, frame.w, frame.h, frame.pitch);
+        RetroCore::ReleaseFrame();
+    }
+}
+
+void ScummVMMain::UpdateRetroPad()
+{
+    struct { int sdl; unsigned retro; } map[] = {
+        { BUTTON_A, RETRO_DEVICE_ID_JOYPAD_A },
+        { BUTTON_B, RETRO_DEVICE_ID_JOYPAD_B },
+        { BUTTON_X, RETRO_DEVICE_ID_JOYPAD_X },
+        { BUTTON_Y, RETRO_DEVICE_ID_JOYPAD_Y },
+        { BUTTON_L, RETRO_DEVICE_ID_JOYPAD_L },
+        { BUTTON_R, RETRO_DEVICE_ID_JOYPAD_R },
+        { BUTTON_L2, RETRO_DEVICE_ID_JOYPAD_L2 },
+        { BUTTON_R2, RETRO_DEVICE_ID_JOYPAD_R2 },
+        { BUTTON_START, RETRO_DEVICE_ID_JOYPAD_START },
+        { BUTTON_SELECT, RETRO_DEVICE_ID_JOYPAD_SELECT },
+        { BUTTON_L3, RETRO_DEVICE_ID_JOYPAD_L3 },
+        { BUTTON_R3, RETRO_DEVICE_ID_JOYPAD_R3 },
+        { BUTTON_DPAD_UP, RETRO_DEVICE_ID_JOYPAD_UP },
+        { BUTTON_DPAD_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN },
+        { BUTTON_DPAD_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT },
+        { BUTTON_DPAD_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT },
+    };
+    for (auto& m : map)
+        RetroCore::SetJoypadButton(m.retro, m_sdlInput->IsButtonHeld(m.sdl));
+
+    float lx, ly, rx, ry;
+    m_sdlInput->GetLeftStick(lx, ly);
+    m_sdlInput->GetRightStick(rx, ry);
+    RetroCore::SetAnalogAxis(0, RETRO_DEVICE_ID_ANALOG_X, (int16_t)(lx * 32767.0f));
+    RetroCore::SetAnalogAxis(0, RETRO_DEVICE_ID_ANALOG_Y, (int16_t)(-ly * 32767.0f));
+}
+
+bool ScummVMMain::Render()
+{
+    static bool firstRender = true;
+    if (firstRender)
+    {
+        firstRender = false;
+        spdlog::info("[scummvm-uwp] Render() first call");
+    }
+
+    // Bind the swap-chain back buffer as the render target (dosbox pattern).
+    auto context = m_deviceResources->GetD3DDeviceContext();
+    ID3D11RenderTargetView* targets[1] = { m_deviceResources->GetBackBufferRenderTargetView() };
+    context->OMSetRenderTargets(1, targets, m_deviceResources->GetDepthStencilView());
+    context->ClearRenderTargetView(targets[0], DirectX::Colors::Black);
+    context->ClearDepthStencilView(m_deviceResources->GetDepthStencilView(),
+        D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+    m_retroD3D11->Render();
+    return true;
+}
+
+void ScummVMMain::OnKeyEvent(VirtualKey key, bool down, uint32_t scanCode, bool isExtended)
+{
+    if (!m_retroCore || !m_retroCore->IsLoaded())
+        return;
+
+    int vk = (int)key;
+    unsigned retroKey = RETROK_UNKNOWN;
+
+    switch (vk)
+    {
+    case 0x10: retroKey = (scanCode == 0x36) ? RETROK_RSHIFT : RETROK_LSHIFT; break;
+    case 0x11: retroKey = isExtended ? RETROK_RCTRL : RETROK_LCTRL; break;
+    case 0x12: retroKey = isExtended ? RETROK_RALT : RETROK_LALT; break;
+
+    case 0x08: retroKey = RETROK_BACKSPACE; break;
+    case 0x09: retroKey = RETROK_TAB;       break;
+    case 0x0C: retroKey = RETROK_CLEAR;     break;
+    case 0x0D: retroKey = RETROK_RETURN;    break;
+    case 0x1B: retroKey = RETROK_ESCAPE;    break;
+    case 0x20: retroKey = RETROK_SPACE;     break;
+
+    case 0x30: retroKey = RETROK_0; break; case 0x31: retroKey = RETROK_1; break;
+    case 0x32: retroKey = RETROK_2; break; case 0x33: retroKey = RETROK_3; break;
+    case 0x34: retroKey = RETROK_4; break; case 0x35: retroKey = RETROK_5; break;
+    case 0x36: retroKey = RETROK_6; break; case 0x37: retroKey = RETROK_7; break;
+    case 0x38: retroKey = RETROK_8; break; case 0x39: retroKey = RETROK_9; break;
+
+    case 0x41: retroKey = RETROK_a; break; case 0x42: retroKey = RETROK_b; break;
+    case 0x43: retroKey = RETROK_c; break; case 0x44: retroKey = RETROK_d; break;
+    case 0x45: retroKey = RETROK_e; break; case 0x46: retroKey = RETROK_f; break;
+    case 0x47: retroKey = RETROK_g; break; case 0x48: retroKey = RETROK_h; break;
+    case 0x49: retroKey = RETROK_i; break; case 0x4A: retroKey = RETROK_j; break;
+    case 0x4B: retroKey = RETROK_k; break; case 0x4C: retroKey = RETROK_l; break;
+    case 0x4D: retroKey = RETROK_m; break; case 0x4E: retroKey = RETROK_n; break;
+    case 0x4F: retroKey = RETROK_o; break; case 0x50: retroKey = RETROK_p; break;
+    case 0x51: retroKey = RETROK_q; break; case 0x52: retroKey = RETROK_r; break;
+    case 0x53: retroKey = RETROK_s; break; case 0x54: retroKey = RETROK_t; break;
+    case 0x55: retroKey = RETROK_u; break; case 0x56: retroKey = RETROK_v; break;
+    case 0x57: retroKey = RETROK_w; break; case 0x58: retroKey = RETROK_x; break;
+    case 0x59: retroKey = RETROK_y; break; case 0x5A: retroKey = RETROK_z; break;
+
+    case 0x21: retroKey = RETROK_PAGEUP;   break;
+    case 0x22: retroKey = RETROK_PAGEDOWN; break;
+    case 0x23: retroKey = RETROK_END;      break;
+    case 0x24: retroKey = RETROK_HOME;     break;
+    case 0x25: retroKey = RETROK_LEFT;     break;
+    case 0x26: retroKey = RETROK_UP;       break;
+    case 0x27: retroKey = RETROK_RIGHT;    break;
+    case 0x28: retroKey = RETROK_DOWN;     break;
+    case 0x2D: retroKey = RETROK_INSERT;   break;
+    case 0x2E: retroKey = RETROK_DELETE;   break;
+    case 0x2F: retroKey = RETROK_HELP;     break;
+
+    case 0xA0: retroKey = RETROK_LSHIFT; break;
+    case 0xA1: retroKey = RETROK_RSHIFT; break;
+    case 0xA2: retroKey = RETROK_LCTRL;  break;
+    case 0xA3: retroKey = RETROK_RCTRL;  break;
+    case 0xA4: retroKey = RETROK_LALT;   break;
+    case 0xA5: retroKey = RETROK_RALT;   break;
+
+    case 0x5B: retroKey = RETROK_LSUPER; break;
+    case 0x5C: retroKey = RETROK_RSUPER; break;
+    case 0x5D: retroKey = RETROK_MENU;   break;
+
+    case 0x60: retroKey = RETROK_KP0; break; case 0x61: retroKey = RETROK_KP1; break;
+    case 0x62: retroKey = RETROK_KP2; break; case 0x63: retroKey = RETROK_KP3; break;
+    case 0x64: retroKey = RETROK_KP4; break; case 0x65: retroKey = RETROK_KP5; break;
+    case 0x66: retroKey = RETROK_KP6; break; case 0x67: retroKey = RETROK_KP7; break;
+    case 0x68: retroKey = RETROK_KP8; break; case 0x69: retroKey = RETROK_KP9; break;
+    case 0x6A: retroKey = RETROK_KP_MULTIPLY; break;
+    case 0x6B: retroKey = RETROK_KP_PLUS; break;
+    case 0x6D: retroKey = RETROK_KP_MINUS; break;
+    case 0x6E: retroKey = RETROK_KP_PERIOD; break;
+    case 0x6F: retroKey = RETROK_KP_DIVIDE; break;
+    case 0x6C: retroKey = RETROK_KP_ENTER; break;
+
+    case 0x70: retroKey = RETROK_F1; break;  case 0x71: retroKey = RETROK_F2; break;
+    case 0x72: retroKey = RETROK_F3; break;  case 0x73: retroKey = RETROK_F4; break;
+    case 0x74: retroKey = RETROK_F5; break;  case 0x75: retroKey = RETROK_F6; break;
+    case 0x76: retroKey = RETROK_F7; break;  case 0x77: retroKey = RETROK_F8; break;
+    case 0x78: retroKey = RETROK_F9; break;  case 0x79: retroKey = RETROK_F10; break;
+    case 0x7A: retroKey = RETROK_F11; break; case 0x7B: retroKey = RETROK_F12; break;
+
+    case 0x13: retroKey = RETROK_PAUSE;     break;
+    case 0x14: retroKey = RETROK_CAPSLOCK;  break;
+    case 0x90: retroKey = RETROK_NUMLOCK;   break;
+    case 0x91: retroKey = RETROK_SCROLLOCK; break;
+    case 0x2C: retroKey = RETROK_PRINT;     break;
+    case 0x2A: retroKey = RETROK_PRINT;     break;
+    case 0xB7: retroKey = RETROK_SYSREQ;    break;
+    case 0x1C: retroKey = RETROK_BREAK;     break;
+
+    case 0xBA: retroKey = RETROK_SEMICOLON;    break;
+    case 0xBB: retroKey = RETROK_EQUALS;       break;
+    case 0xBC: retroKey = RETROK_COMMA;        break;
+    case 0xBD: retroKey = RETROK_MINUS;        break;
+    case 0xBE: retroKey = RETROK_PERIOD;       break;
+    case 0xBF: retroKey = RETROK_SLASH;        break;
+    case 0xC0: retroKey = RETROK_BACKQUOTE;    break;
+    case 0xDB: retroKey = RETROK_LEFTBRACKET;  break;
+    case 0xDC: retroKey = RETROK_BACKSLASH;    break;
+    case 0xDD: retroKey = RETROK_RIGHTBRACKET; break;
+    case 0xDE: retroKey = RETROK_QUOTE;        break;
+
+    default: break;
+    }
+
+    if (retroKey != RETROK_UNKNOWN)
+        RetroCore::SetKeyState(retroKey, down);
+}
+
+void ScummVMMain::PauseEmulation()
+{
+    m_paused = true;
+    if (m_retroCore)
+        m_retroCore->Pause();
+}
+
+void ScummVMMain::ResumeEmulation()
+{
+    m_paused = false;
+    if (m_retroCore)
+        m_retroCore->Resume();
+}
+
+void ScummVMMain::Shutdown()
+{
+    if (m_retroCore)
+        m_retroCore->Shutdown();
+}
+
+void ScummVMMain::OnDeviceLost()
+{
+    m_retroD3D11->ReleaseDeviceDependentResources();
+}
+
+void ScummVMMain::OnDeviceRestored()
+{
+    m_retroD3D11->CreateDeviceDependentResources();
+}
