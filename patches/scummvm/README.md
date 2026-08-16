@@ -4,6 +4,12 @@ Patches aplicaveis ao submodule `extern/scummvm` (HEAD `e833307e`).
 O submodule fica **100% upstream/limpo** (sem fork); os fixes vivem aqui e sao
 aplicados sob demanda. Origem do patching: `docs/DISCOVERIES.md` ## 15/16.
 
+> **Route D (2026-08-14):** a arquitetura agora usa o frontend libretro proprio
+> e carrega o **binario buildbot** (`cores/scummvm_libretro.dll`) via
+> `LoadLibrary` — nao compilamos o core localmente. Sendo assim, **`0002`
+> (build MSVC) e OBSOLETO**. O `0001` (temas) continua essencial porque o zip
+> versionado `system/scummvm.zip` ja embute os temas corrigidos.
+
 ## Aplicar / reverter
 
 ```powershell
