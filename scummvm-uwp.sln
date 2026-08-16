@@ -2,7 +2,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.37516.0
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScummVMLauncher", "launcher\ScummVMLauncher\ScummVMLauncher.csproj", "{08B91389-2438-4005-8D99-4B7ED72E2F70}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ScummVMFrontend", "launcher\ScummVMFrontend\ScummVMFrontend.vcxproj", "{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -10,12 +10,12 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Debug|x64.ActiveCfg = Debug|x64
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Debug|x64.Build.0 = Debug|x64
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Debug|x64.Deploy.0 = Debug|x64
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Release|x64.ActiveCfg = Release|x64
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Release|x64.Build.0 = Release|x64
-		{08B91389-2438-4005-8D99-4B7ED72E2F70}.Release|x64.Deploy.0 = Release|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Debug|x64.ActiveCfg = Debug|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Debug|x64.Build.0 = Debug|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Debug|x64.Deploy.0 = Debug|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Release|x64.ActiveCfg = Release|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Release|x64.Build.0 = Release|x64
+		{4F1C9A2E-7B3D-4C5E-9A1B-2D3E4F5A6B7C}.Release|x64.Deploy.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
