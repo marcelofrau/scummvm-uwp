@@ -255,7 +255,18 @@ namespace scummvm_uwp
             std::wstring iniPath = systemDir + L"\\scummvm.ini";
             if (!fs::exists(iniPath))
             {
-                WriteUtf8File(iniPath, "[scummvm]\ngui_theme=scummremastered\ngui_scale=150\n");
+                WriteUtf8File(iniPath,
+                    "[scummvm]\n"
+                    "gui_theme=scummremastered\n"
+                    "gui_scale=150\n"
+                    "aspect_ratio=true\n"
+                    "filtering=true\n"
+                    "stretch_mode=center\n"
+                    "fullscreen=true\n"
+                    "gfx_mode=normal\n"
+                    "scalermode=2xSaI\n"
+                    "shader=\n"
+                    );
                 spdlog::info("[bootstrap] scummvm.ini written (first run)");
             }
             else

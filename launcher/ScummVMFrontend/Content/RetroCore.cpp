@@ -877,8 +877,57 @@ int RetroCore::retro_env(unsigned cmd, void* data)
         }
         return 0;
     }
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+    case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
+    {
+        int* version = static_cast<int*>(data);
+        if (version)
+        {
+            *version = 2;  // Support SET_CORE_OPTIONS_V2
+            OutputDebugStringA("[scummvm-uwp]   GET_CORE_OPTIONS_VERSION: 2\n");
+        }
         return 1;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+    {
+        auto* opts = static_cast<const retro_core_options_v2*>(data);
+        if (opts && opts->definitions)
+        {
+            std::lock_guard<std::mutex> lk(s_optionMutex);
+            for (int i = 0; opts->definitions[i].key; ++i)
+            {
+                const auto& def = opts->definitions[i];
+                const char* key = def.key;
+                const char* defVal = def.default_value;
+                // Only store if not already set by the user
+                if (s_optionValues.find(key) == s_optionValues.end() && defVal)
+                {
+                    s_optionValues[key] = defVal;
+                }
+            }
+            OutputDebugStringA("[scummvm-uwp]   SET_CORE_OPTIONS_V2: registered defaults\n");
+        }
+        return 1;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+    {
+        auto* intl = static_cast<const retro_core_options_v2_intl*>(data);
+        if (intl && intl->us && intl->us->definitions)
+        {
+            std::lock_guard<std::mutex> lk(s_optionMutex);
+            for (int i = 0; intl->us->definitions[i].key; ++i)
+            {
+                const auto& def = intl->us->definitions[i];
+                const char* key = def.key;
+                const char* defVal = def.default_value;
+                if (s_optionValues.find(key) == s_optionValues.end() && defVal)
+                {
+                    s_optionValues[key] = defVal;
+                }
+            }
+            OutputDebugStringA("[scummvm-uwp]   SET_CORE_OPTIONS_V2_INTL: registered defaults\n");
+        }
+        return 1;
+    }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
         return 1;
     case RETRO_ENVIRONMENT_SET_VARIABLES:
@@ -949,7 +998,7 @@ int RetroCore::retro_env(unsigned cmd, void* data)
                 { "scummvm_mapper_rr", "RETROK_RIGHT" },
                 { "scummvm_video_hw_acceleration", "disabled" },
                 { "scummvm_gui_h_res", "720" },
-                { "scummvm_gui_aspect_ratio", "0" },
+                { "scummvm_gui_aspect_ratio", "1" },
             };
             for (const auto& d : kCoreDefaults)
             {

@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <fstream>
 #include <type_traits>
+#include <vector>
+#include "miniz/miniz.h"
 
 #pragma push_macro("OutputDebugStringA")
 #undef OutputDebugStringA
@@ -206,12 +208,129 @@ inline void LogPrint(const char* msg)
 
 #define OutputDebugStringA(msg) LogPrint(msg)
 
+inline bool GzipCompressFile(const std::wstring& srcPath, const std::wstring& dstPath)
+{
+    // Read source file
+    std::ifstream in(srcPath, std::ios::binary | std::ios::ate);
+    if (!in) return false;
+    std::streamsize sz = in.tellg();
+    if (sz <= 0) { in.close(); return false; }
+    in.seekg(0, std::ios::beg);
+    std::vector<unsigned char> src(static_cast<size_t>(sz));
+    if (!in.read(reinterpret_cast<char*>(src.data()), sz)) { in.close(); return false; }
+    in.close();
+
+    // Compress with miniz into a gzip-compatible buffer
+    unsigned long compSize = (unsigned long)(sz * 110 / 100 + 64);
+    std::vector<unsigned char> comp(compSize);
+
+    // miniz mz_compress gives raw deflate — write as .gz manually
+    mz_stream stream = {};
+    stream.next_in = src.data();
+    stream.avail_in = (mz_uint32)src.size();
+    stream.next_out = comp.data();
+    stream.avail_out = compSize;
+    stream.zalloc = NULL;
+    stream.zfree = NULL;
+    stream.opaque = NULL;
+
+    int level = MZ_DEFAULT_COMPRESSION;
+    int status = mz_deflateInit2(&stream, level, MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS, 9, MZ_DEFAULT_STRATEGY);
+    if (status != MZ_OK) return false;
+    status = mz_deflate(&stream, MZ_FINISH);
+    mz_deflateEnd(&stream);
+    if (status != MZ_STREAM_END) return false;
+
+    compSize = stream.total_out;
+
+    // Write gzip file: magic + method + flags + mtime + xfl + OS + compressed data + CRC32 + size
+    mz_ulong crc = mz_crc32(MZ_CRC32_INIT, src.data(), (unsigned long)src.size());
+    mz_ulong isize = (mz_ulong)src.size() & 0xFFFFFFFF;
+    mz_ulong csize = (mz_ulong)compSize;
+
+    std::ofstream out(dstPath, std::ios::binary);
+    if (!out) return false;
+    unsigned char hdr[10] = {
+        0x1f, 0x8b,  // gzip magic
+        0x08,        // deflate
+        0x00,        // flags
+        0,0,0,0,     // mtime (0)
+        0x00,        // xfl
+        0xff          // OS (unknown)
+    };
+    out.write(reinterpret_cast<const char*>(hdr), 10);
+    out.write(reinterpret_cast<const char*>(comp.data()), compSize);
+    unsigned char footer[8];
+    footer[0] = (crc >>  0) & 0xff; footer[1] = (crc >>  8) & 0xff;
+    footer[2] = (crc >> 16) & 0xff; footer[3] = (crc >> 24) & 0xff;
+    footer[4] = (isize >>  0) & 0xff; footer[5] = (isize >>  8) & 0xff;
+    footer[6] = (isize >> 16) & 0xff; footer[7] = (isize >> 24) & 0xff;
+    out.write(reinterpret_cast<const char*>(footer), 8);
+    out.close();
+    return true;
+}
+
+inline void LogRotate(const std::wstring& dir)
+{
+    // Rotate scummvm-debug.log → .1.log.gz → .2.log.gz → .3.log.gz → .4.log.gz
+    // Delete anything beyond .4.log.gz (keeps last 5 sessions total).
+    const int kMaxOld = 4;
+
+    // Delete oldest
+    for (int i = kMaxOld + 1; i <= kMaxOld + 10; ++i)
+    {
+        std::wstring p = dir + L"\\scummvm-debug." + std::to_wstring(i) + L".log.gz";
+        DeleteFileW(p.c_str());
+        // Also delete uncompressed leftover
+        std::wstring plog = dir + L"\\scummvm-debug." + std::to_wstring(i) + L".log";
+        DeleteFileW(plog.c_str());
+    }
+
+    // Compress .N-1.log → .N.log.gz (for N = kMaxOld down to 2)
+    // Then delete the .N-1.log source.
+    for (int i = kMaxOld; i >= 2; --i)
+    {
+        std::wstring srcLog = dir + L"\\scummvm-debug." + std::to_wstring(i - 1) + L".log";
+        std::wstring dstGz = dir + L"\\scummvm-debug." + std::to_wstring(i) + L".log.gz";
+        DeleteFileW(dstGz.c_str());
+        if (GzipCompressFile(srcLog, dstGz))
+        {
+            DeleteFileW(srcLog.c_str());
+        }
+        else
+        {
+            // Compression failed — just shift as uncompressed
+            std::wstring dstLog = dir + L"\\scummvm-debug." + std::to_wstring(i) + L".log";
+            MoveFileExW(srcLog.c_str(), dstLog.c_str(), MOVEFILE_REPLACE_EXISTING);
+        }
+    }
+
+    // .1.log ← current log (uncompressed, active)
+    {
+        std::wstring current = dir + L"\\scummvm-debug.log";
+        std::wstring first = dir + L"\\scummvm-debug.1.log";
+        MoveFileExW(current.c_str(), first.c_str(), MOVEFILE_REPLACE_EXISTING);
+    }
+}
+
 inline void LogInit(const wchar_t* logPath)
 {
     if (logPath && *logPath)
         spdlog::g_logPath = logPath;
     else
         spdlog::g_logPath.clear();
+
+    // Rotate previous logs — keep last 5 sessions
+    if (!spdlog::g_logPath.empty())
+    {
+        // Extract directory from logPath
+        size_t pos = spdlog::g_logPath.find_last_of(L'\\');
+        if (pos != std::wstring::npos)
+        {
+            std::wstring dir = spdlog::g_logPath.substr(0, pos);
+            LogRotate(dir);
+        }
+    }
 
     std::ofstream probe(spdlog::g_logPath, std::ios::binary | std::ios::app);
     if (probe)
