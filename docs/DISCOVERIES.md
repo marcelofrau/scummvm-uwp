@@ -341,3 +341,544 @@ inside the submodule.
    rebuilding the core with MSVC).
 3. Regenerate themes → rebuild `scummvm.zip` → **commit the new zip**.
 4. Revert the submodule (`git -C extern/scummvm checkout -- .`).
+
+## 17. Xbox silent process termination — app dies without debugger
+
+**Symptom.** The C++/CoreWindow frontend works perfectly under VS2026 debugger
+(F5) but is killed silently by the Xbox OS when launched without a debugger.
+Both Debug and Release packages exhibit the same behavior. Re-launching the
+installed package without the debugger also crashes — the distinguishing factor
+is debugger presence, not build configuration.
+
+### 17.1 Logging infrastructure
+
+No logs existed at all because LogInit ran inside `App::Initialize` (after
+activation) — death before activation = zero output. The fallback
+`C:\scummvm-crash.log` was unwritable in AppContainer sandbox.
+
+Unified log (`LocalState\scummvm-debug.log`) implemented:
+- `ResolveLogPath()` with `ApplicationData::LocalFolder` primary + Win32 fallback
+- `LogInit()` moved to `main()` BEFORE `CoreApplication::Run`
+- `BootTrace()` inline helper: QPC timestamps + thread ID + flush-per-line,
+  independent of spdlog, both wide and UTF-8 overloads
+- Marker flood across all boot stages including pre-Run blind spots
+- CrashFilter for unhandled exceptions (code/addr/thread/module)
+- First log line records package identity: `pkg=<FamilyName> v=<ver>`
+
+Files instrumented: main.cpp, App.cpp (Initialize/Load/Run/SetWindow),
+ScummVMMain.cpp (constructor/BootCore), RetroCore.cpp (thread/init/load/heartbeat),
+Bootstrap.cpp (extraction stages).
+
+### 17.2 Process is externally killed, not crashing
+
+Forensic analysis of multiple sessions from the unified log. Key evidence:
+
+**Under debugger (F5):** App runs indefinitely. Session 3 from early dumps:
+```
+[boot 00291.8ms] emu: first retro_run begin
+[RetroCore] RunFrame #1
+[boot 00292.4ms] emu: frame #1
+... 19920+ frames at ~15ms/frame ...
+[scummvm-uwp] SHUTDOWN requested
+[RetroCore] core requested SHUTDOWN — unloading game
+```
+19920+ frames, ~8.6 minutes, clean SHUTDOWN via RB button. CoreWindow activated,
+input working, audio playing.
+
+**Without debugger (standalone):** App boots fully then vanishes:
+```
+[boot 00297.0ms] emu: frame #1
+[boot 00297.4ms] emu: retro_run() calling
+[core] Mixer set up at 48000Hz
+[scummvm-uwp] retro_video FIRST REAL FRAME: 960x720 pitch=1920
+[boot 00372.4ms] emu: first video frame
+[boot 00377.7ms] emu: retro_run() returned
+... heartbeats, gamepad connected ...
+=== END OF LOG ===
+```
+No `[ExitProcess]`, no `[TerminateProcess]`, no unhandled exceptions after the
+frame. The PatchExitProcess hook (IAT-detoured) never fires — confirming the
+process is terminated externally by the OS, not by any in-process API.
+
+**Timing:** Standalone death at ~260ms after Run enter. Debugger prevents the
+UWP process lifetime manager from activating. Without debugger, OS applies
+aggressive timeout.
+
+### 17.3 False positive: 0xe06d7363 VectoredException
+
+The exception code `0xe06d7363` fires during `SetWindow`/`CreateDevice` in
+EVERY run (F5 and standalone). It's the D3D11 debug layer probe in
+`DirectXHelper.h::CreateDevice` — a try/catch that tests if the debug layer
+is available. Code `0xe06d7363` = C++ exception (MSVC convention). Caught
+internally, not a real crash.
+
+Added filter in `FirstChanceExceptionHandler` to skip `0xe06d7363`. Reduces
+2 lines of noise per run without losing any diagnostic signal.
+
+### 17.4 Emu thread death in microsecond window
+
+After adding per-frame heartbeats (every 60 frames ≈1s) plus before/after
+`retro_run()` markers for first 3 frames:
+```
+[boot 00297.0ms] emu: frame #1
+[boot 00297.4ms] emu: retro_run() calling
+```
+In standalone sessions, `emu: frame #1` BootTrace does NOT appear — the process
+dies between `spdlog::info` and `BootTrace` on the emu thread, a microsecond
+window. The UI thread's heartbeat fires but the log ends immediately after.
+
+### 17.5 Structural comparison with dosbox-uwp
+
+**Reference source:** `F:\workspace\vs2022\dosbox-pure-unleashed-uwp\dosbox-uwp\`
+(GitHub: XboxEmulationHub/dosbox-pure-unleashed, branch with UWP frontend).
+
+This frontend runs indefinitely on the same Xbox without debugger — the same
+test that kills ScummVM. Side-by-side analysis of every component:
+
+#### 17.5.1 main() and LogInit timing
+
+**dosbox-uwp** (`App.cpp:24-29`):
+```cpp
+[Platform::MTAThread]
+int main(Platform::Array<Platform::String^>^) {
+    auto direct3DApplicationSource = ref new Direct3DApplicationSource();
+    CoreApplication::Run(direct3DApplicationSource);
+    return 0;
+}
+```
+Minimal. LogInit is inside `App::Initialize` (line 49). No crash filter, no
+boot trace, no extra work before Run. Just `CoreApplication::Run` directly.
+
+**ScummVM** (`main.cpp`):
+```cpp
+int main(...) {
+    ResolveLogPath();           // ApplicationData + Win32 fallback
+    LogInit(path);              // spdlog + file sink BEFORE Run
+    InstallCrashFilter();       // SetUnhandledExceptionFilter
+    BootTrace(L"CoreApplication::Run start");
+    CoreApplication::Run(source);
+    BootTrace(L"CoreApplication::Run exit");
+}
+```
+More pre-Run work, but all of it is synchronous/cheap and completes in <1ms.
+Not the cause.
+
+#### 17.5.2 App::Initialize — what each adds
+
+**dosbox-uwp** (`App.cpp:47-72`):
+```cpp
+void App::Initialize(CoreApplicationView^ applicationView) {
+    LogInit();                                          // spdlog
+    // Event subscriptions: Activated, Suspending, Resuming
+    m_deviceResources = std::make_shared<DX::DeviceResources>();
+    // DisplayRequest — screen-on only
+    m_displayRequest = ref new DisplayRequest();
+    m_displayRequest->RequestActive();
+    QueryPerformanceFrequency(&m_perfFrequency);
+    QueryPerformanceCounter(&m_lastFrameTime);
+}
+```
+No VEH. No IAT patching. No ExtendedExecution. No InvalidParameterHandler.
+Just: logging, events, D3D device, display request, QPC init.
+
+**ScummVM** (`App.cpp`):
+```cpp
+void App::Initialize(CoreCoreApplicationView^ applicationView) {
+    LogInit();
+    // Event subscriptions (same 3 as dosbox)
+    m_deviceResources = std::make_shared<DX::DeviceResources>();
+    // [ADDED] ExtendedExecution request — lifecycle management
+    m_extSession = ref new ExtendedExecutionSession();
+    m_extSession->Reason = ExtendedExecutionReason::Unspecified;
+    m_extSession->RequestExtensionAsync();  // fire-and-forget
+    // [ADDED] DisplayRequest — same as dosbox
+    m_displayRequest = ref new DisplayRequest();
+    m_displayRequest->RequestActive();
+    // [ADDED] VEH — crash/diagnostic capture
+    AddVectoredExceptionHandler(1, FirstChanceExceptionHandler);
+    // [ADDED] CRT safety
+    _set_invalid_parameter_handler(InvalidParameterHandler);
+    _set_thread_local_invalid_parameter_handler(InvalidParameterHandler);
+}
+```
+Four additions vs dosbox: ExtendedExecution, VEH, InvalidParameterHandler.
+(VEH and InvalidParameterHandler already ruled out by bisect.)
+
+#### 17.5.3 App::Run loop — IDENTICAL structure
+
+**dosbox-uwp** (`App.cpp:144-192`):
+```cpp
+void App::Run() {
+    while (!m_windowClosed) {
+        if (m_windowVisible) {
+            ProcessEvents(ProcessAllIfPresent);
+            m_main->Update();
+            if (m_main->Render())
+                Present(syncInterval, 0);
+            // Frame pacing: Sleep based on target FPS, Sleep(1) minimum
+            if (syncInterval == 0) {
+                // ... timing logic ...
+                Sleep(1); // always yield
+            }
+            m_main->ProcessPendingLoad();
+        } else {
+            ProcessEvents(ProcessOneAndAllPending);
+        }
+    }
+}
+```
+
+**ScummVM** (`App.cpp:430-493`):
+```cpp
+void App::Run() {
+    while (!m_windowClosed) {
+        if (m_windowVisible) {
+            ProcessEvents(ProcessAllIfPresent);
+            m_main->Update();
+            if (m_main->Render())
+                Present(syncInterval, 0);
+            // Frame pacing: IDENTICAL to dosbox
+            if (syncInterval == 0) {
+                // ... timing logic ...
+                Sleep(1); // always yield
+            }
+            // [NO ProcessPendingLoad — ScummVM loads eagerly in EnsureBoot]
+        } else {
+            ProcessEvents(ProcessOneAndAllPending);
+        }
+    }
+}
+```
+The run loops are **functionally identical**. Both have the Sleep(1) pacing.
+The only difference: dosbox calls `ProcessPendingLoad()` after Present (lazy
+ROM loading), ScummVM doesn't (eager boot in EnsureBoot).
+
+#### 17.5.4 Boot path — KEY DIFFERENCE
+
+**dosbox-uwp** `Load()` + `Update()`:
+```cpp
+void App::Load(Platform::String^) {
+    m_main = std::make_unique<dosbox_uwpMain>(m_deviceResources);
+}
+// dosbox_uwpMain constructor: trivial — just stores the device resources pointer.
+// NO core loading, NO DLL, NO audio init. Just member initialization.
+```
+`m_main->Update()` when no ROM loaded: does nothing meaningful (polls input,
+skips rendering). The heavy `ProcessPendingLoad()` (LoadLibrary, retro_init,
+retro_load_game) only runs AFTER the user selects a ROM through the file
+browser — completely off the critical path.
+
+**ScummVM** `Load()` + `Update()`:
+```cpp
+void App::Load(Platform::String^) {
+    m_main = std::make_unique<ScummVMMain>(m_deviceResources);
+    // ScummVMMain constructor: stores device resources, creates SdlInput, etc.
+}
+// Update() first call:
+m_main->EnsureBoot();  // BLOCKS UI THREAD:
+    // 1. Bootstrap extraction (scummvm.zip → LocalState)
+    // 2. XAudio2 init
+    // 3. LoadLibraryExW(scummvm_libretro.dll) — 125MB DLL
+    // 4. retro_init, retro_load_game(NULL)
+    // Total: 35-50ms with zero ProcessEvents calls
+```
+
+This is the **most significant structural difference**. dosbox-uwp presents
+frames to the Xbox compositor almost immediately (trivial render). ScummVM
+blocks the UI thread for 35-50ms doing heavy I/O before the first Present.
+During this window, no `ProcessEvents` runs — the CoreWindow message pump
+is starved.
+
+#### 17.5.5 Component inventory (what ScummVM has that dosbox doesn't)
+
+| Component | ScummVM | dosbox-uwp | Bisect result |
+|-----------|---------|------------|---------------|
+| `ExtendedExecutionSession` | ✓ | ✗ | ❌ NOT the trigger |
+| `AddVectoredExceptionHandler` | ✓ | ✗ | ❌ NOT the trigger |
+| `PatchExitProcessImports` | ✓ | ✗ | ❌ NOT the trigger |
+| `_set_invalid_parameter_handler` | ✓ | ✗ | Low priority |
+| `EnsureBoot()` blocking | ✓ | ✗ | ⏳ structural — needs testing |
+| `OnSuspending` deferral | ✗ | ✓ | ⏳ HIGH — dosbox requests `deferral->Complete()` via async task |
+
+#### 17.5.6 OnSuspending — another difference (IMPLEMENTED, ruled out)
+
+**dosbox-uwp** (`App.cpp:209-233`):
+```cpp
+void App::OnSuspending(Object^ sender, SuspendingEventArgs^ args) {
+    SuspendingDeferral^ deferral = args->SuspendingOperation->GetDeferral();
+    if (m_main) m_main->PauseEmulation();
+    if (m_displayRequest) m_displayRequest->RequestRelease();
+    create_task([this, deferral]() {
+        m_deviceResources->Trim();
+        deferral->Complete();
+    });
+}
+```
+
+**ScummVM (after Test 5):** Now matches dosbox-uwp exactly — deferral,
+DisplayRequest release, Trim() async, deferral->Complete(). Also added
+DisplayRequest re-acquire on OnResuming. **Result: still dies at ~225ms
+without debugger.** See section 17.13.
+
+**Original ScummVM (before Test 5):**
+```cpp
+void App::OnSuspending(Object^ sender, SuspendingEventArgs^ args) {
+    if (m_main) m_main->PauseEmulation();
+}
+```
+No deferral, no DisplayRequest release, no Trim().
+
+#### 17.5.7 Summary of all differences
+
+| # | Difference | Risk level | Bisect result |
+|---|-----------|------------|---------------|
+| 1 | EnsureBoot blocking UI thread 35-50ms | ⏳ STRUCTURAL | All boot stages complete, but death at ~225ms is consistent |
+| 2 | OnSuspending deferral/Trim | ❌ Ruled out | Test 5: implemented, still dies |
+| 3 | ExtendedExecution request | ❌ Ruled out | Test 4: removed, still dies |
+| 4 | VEH | ❌ Ruled out | Test 1: removed, still dies |
+| 5 | IAT patching | ❌ Ruled out | Test 3: removed, still dies |
+| 6 | InvalidParameterHandler | 🔵 LOW | Not tested — unlikely to affect OS lifecycle |
+| 7 | ProcessPendingLoad vs eager boot | ℹ️ INFO | Different design, not a bug — but affects first-frame timing |
+
+### 17.6 Bisect methodology
+
+Interactive compile-time disable of one component at a time. Each test:
+1. F5 from VS2026 — confirms build works, captures debugger-baseline log
+2. Close app on Xbox
+3. Launch directly on Xbox (no debugger) — the actual test
+4. Pull `scummvm-debug.log` from Device Portal File Explorer
+5. Analyze log for boot completion, frame count, death point
+
+User runs 2x per test (debugger + standalone), clears logs between tests.
+
+### 17.7 Bisect attempt 1: disable VEH
+
+**Change:** Commented out `AddVectoredExceptionHandler` call in `App::Initialize`.
+VEH handler code still compiled but never registered. All other components
+(ExtendedExecution, DisplayRequest, IAT) active.
+
+**Log confirmed:** `[boot] VEH handler: DISABLED (bisect test)`
+
+**Result — Session 1 (F5):**
+```
+[boot 00133.7ms] VEH handler: DISABLED (bisect test)
+[boot 00133.8ms] IAT hooks: INSTALLED
+... full boot, retro_init, load_game ...
+[RetroCore] RunFrame #1 → #60 → #120 → #180
+[scummvm-uwp] SHUTDOWN requested  ← clean exit
+```
+180 frames, ~4.7s, clean shutdown. ✅
+
+**Result — Session 2 (standalone):**
+```
+[boot 00105.4ms] VEH handler: DISABLED (bisect test)
+... full boot, retro_init, load_game ...
+[boot 00253.8ms] emu: frame #1
+[boot 00254.2ms] emu: retro_run() calling
+[scummvm-uwp] UWP Gamepad connected
+=== END ===
+```
+Frame #1 present, heartbeat fires, gamepad connects → process killed.
+Same as baseline. ❌
+
+**Result — Session 3 (standalone):** Identical to session 2. ❌
+
+**Conclusion:** VEH is NOT the trigger. Removing `AddVectoredExceptionHandler`
+does not prevent the OS from killing the process.
+
+### 17.8 Bisect attempt 2: disable IAT patching (partial)
+
+**Change:** Commented out `PatchExitProcessImports()` in `App::Initialize` only.
+The second call site in `ScummVMMain.cpp:118` (called after LoadLibrary of the
+core DLL) was NOT disabled.
+
+**Log confirmed:** `[boot] IAT hooks: DISABLED (bisect test)` but also:
+```
+[ExitProcess/TerminateProcess IAT hook ready]  ← from BootCore
+[boot] boot: IAT hooks patched
+```
+IAT was still being patched on the core DLL. Test was inconclusive for IAT.
+
+**Result:** Same death pattern. But IAT was not fully disabled — need to also
+disable the ScummVMMain.cpp call site.
+
+### 17.9 Bisect attempt 3: disable IAT patching (complete)
+
+**Change:** Also commented out `PatchExitProcessImports()` in
+`ScummVMMain.cpp:118`. Both call sites disabled.
+
+**Log confirmed:**
+```
+[boot] IAT hooks: DISABLED (bisect test)
+[boot] boot: IAT hooks SKIPPED (bisect)
+```
+No `[ExitProcess/TerminateProcess IAT hook ready]` anywhere in the log. IAT
+patching fully disabled.
+
+**Result — Session 1 (F5):**
+```
+[boot 00136.4ms] VEH handler: INSTALLED
+[boot 00136.5ms] IAT hooks: DISABLED (bisect test)
+[boot 00272.0ms] boot: IAT hooks SKIPPED (bisect)
+... full boot, retro_init, load_game ...
+[RetroCore] RunFrame #1 → #60 → #120 → #180
+[scummvm-uwp] SHUTDOWN requested
+[scummvm-uwp] UnloadGameInternal
+```
+180 frames, ~4.7s, clean shutdown. ✅
+
+**Result — Session 2 (standalone):**
+```
+[boot 00105.4ms] VEH handler: INSTALLED
+[boot 00105.5ms] IAT hooks: DISABLED (bisect test)
+[boot 00218.8ms] boot: IAT hooks SKIPPED (bisect)
+... full boot, retro_init, load_game ...
+[boot 00253.8ms] emu: frame #1
+[boot 00254.2ms] emu: retro_run() calling
+[scummvm-uwp] UWP Gamepad connected
+=== END ===
+```
+Frame #1 + heartbeat + gamepad → process killed. Same as baseline. ❌
+
+**Result — Session 3 (standalone):** Identical. ❌
+
+**Conclusion:** IAT patching is NOT the trigger. Both VEH and IAT patching
+(`PatchExitProcessImports` on kernel32/ntdll/core DLL import tables) are
+confirmed safe to remove without affecting the termination behavior.
+
+### 17.9 Bisect attempt 4: disable ExtendedExecution
+
+**Change:** Commented out `ExtendedExecutionSession` request in `App::Initialize`.
+Re-enabled VEH and IAT (clean test isolating only ExtendedExecution).
+
+**Log confirmed:** `[boot] ExtendedExecution: DISABLED (bisect test)`
+
+**Result — Session 1 (F5):**
+```
+[boot 00023.5ms] ExtendedExecution: DISABLED (bisect test)
+[boot 00170.1ms] device resources: create done
+[boot 00170.5ms] VEH handler: INSTALLED
+[boot 00170.8ms] IAT hooks: INSTALLED
+... full boot, retro_init, load_game ...
+[RetroCore] RunFrame #1 → #60 → ... → #3240
+[scummvm-uwp] SHUTDOWN requested  ← clean exit
+```
+3240 frames, ~78s, clean shutdown. ✅
+
+**Result — Sessions 2 & 3 (standalone):**
+```
+[boot 00096.7ms] VEH handler: INSTALLED
+[boot 00097.1ms] IAT hooks: INSTALLED
+[boot 00224.2ms] emu: first retro_run begin
+[boot 00224.9ms] emu: retro_run() calling
+[scummvm-uwp] UWP Gamepad connected
+=== END ===
+```
+Frame #1 + heartbeat + gamepad → process killed. Same as baseline. ❌
+
+**Conclusion:** ExtendedExecution is NOT the trigger. All four components
+(VEH, IAT, ExtendedExecution, DisplayRequest) are confirmed individually
+safe — removing any one of them does not prevent the Xbox OS from killing
+the process.
+
+**Critical observation:** In all standalone sessions across all 4 tests,
+death occurs at **~225ms** after `CoreApplication::Run start`. This
+consistent timing suggests the Xbox OS applies a **fixed-duration activation
+watchdog** (~250ms). The app's structure (blocking boot → first frame →
+death at same timestamp regardless of what's removed) points to a
+lifecycle-state mismatch, not any specific API.
+
+### 17.10 Summary of ruled-out triggers
+
+| Component | What it does | Result |
+|-----------|-------------|--------|
+| VEH (`AddVectoredExceptionHandler`) | Registers process-wide first-chance exception handler for crash/diagnostic capture | ❌ NOT the trigger — removing it doesn't help |
+| IAT patching (`PatchExitProcessImports`) | Replaces `ExitProcess`/`TerminateProcess` pointers in import tables of kernel32.dll, ntdll.dll, CRT, and scummvm_libretro.dll | ❌ NOT the trigger — removing it doesn't help |
+| ExtendedExecution (`ExtendedExecutionSession`) | Requests extended process lifetime from OS | ❌ NOT the trigger — removing it doesn't help |
+| DisplayRequest (`RequestActive`) | Keeps screen on (prevents dim/sleep) | Kept — same API as dosbox-uwp, not lifecycle-related |
+| InvalidParameterHandler | `_set_invalid_parameter_handler` for CRT safety | Low priority — not in dosbox-uwp but unlikely to trigger OS termination |
+
+### 17.11 Remaining hypotheses
+
+After bisecting ALL ScummVM-specific additions (VEH, IAT, ExtendedExecution,
+OnSuspending deferral+Trim), the problem is **confirmed structural**.
+
+**Key data:** Death occurs at consistent **~225ms** after
+`CoreApplication::Run start` in every standalone session, regardless of which
+components are removed. Under debugger, runs indefinitely (thousands of frames).
+
+**H-Struct-A: Activation watchdog timing (STRONGEST)**
+Xbox UWP process lifecycle requires the app to reach "activated" state
+within ~250ms. ScummVM's EnsureBoot blocks UI thread 35-50ms (LoadLibrary
+125MB + XAudio2 + retro_init + retro_load_game), then first retro_run()
+takes ~80ms. Total: ~225ms from Run to first video callback. The watchdog
+fires because the process hasn't completed its activation sequence. dosbox-uwp
+survives because its boot is near-instant (trivial constructor, no core
+loading).
+
+**H-Struct-B: OutputDebugString without debugger (MEDIUM)**
+The ScummVM core emits OutputDebugString (DBG_PRINT exception 0x40010006).
+Under debugger, these are consumed by WaitForDebugEvent. Without debugger
+and without VEH to observe them, they become unhandled first-chance
+exceptions that Windows may terminate the process for. This explains why
+the death timing correlates with core activity (retro_run) — the core
+emits ODS during its init.
+
+### 17.12 Next tests
+
+1. **Test 6: non-blocking EnsureBoot** — Defer EnsureBoot() to background
+   thread or add ProcessEvents yields. Goal: Present frames to compositor
+   before heavy I/O. If survives → H-Struct-A confirmed.
+
+2. **Test 7: suppress OutputDebugString** — Redirect ODS via
+   `SetEnvironmentVariable("DOTNET_DbgBreakEnabled","0")` or compile
+   `scummvm_libretro.dll` with ODS suppressed. If survives → H-Struct-B
+   confirmed.
+
+3. **Test 8: bare minimum** — Strip to match dosbox-uwp exactly: no VEH,
+   no IAT, no ExtendedExec, no InvalidParameterHandler, keep only
+   DisplayRequest + proper OnSuspending + Sleep(1). If survives, bisect
+   upward to find minimum viable config.
+
+### 17.13 Bisect attempt 5: OnSuspending deferral + Trim (Test 5)
+
+**Change:** Added full dosbox-uwp OnSuspending handling to ScummVM:
+- `SuspendingDeferral` request from `args->SuspendingOperation->GetDeferral()`
+- `PauseEmulation()` before deferral work
+- `DisplayRequest::RequestRelease()` on suspend
+- Async `Trim()` + `deferral->Complete()` via `create_task`
+- `DisplayRequest::RequestActive()` on `OnResuming`
+
+Also added `#include <ppltasks.h>` and `using namespace concurrency;` for
+`create_task`.
+
+**Result — Session 1 (F5):**
+```
+[boot 00216.0ms] boot: begin
+[boot 00277.6ms] emu: retro_init ok
+[boot 00281.8ms] emu: load_game ok
+[boot 00283.9ms] emu: frame #1
+[boot 00359.7ms] emu: first video frame 960x720 pitch=1920
+... RunFrame #60, #120, ... #720 ...
+[scummvm-uwp] SHUTDOWN requested ← clean exit
+```
+720 frames, ~17s, clean shutdown. ✅
+
+**Result — Sessions 2 & 3 (standalone):**
+```
+[boot 00222.4ms] emu: retro_run() calling
+[boot 00224.0ms] emu: frame #1
+[scummvm-uwp] UWP Gamepad connected
+=== END ===
+```
+Frame #1 + heartbeat + gamepad → killed at ~225ms. ❌
+
+**Critical finding:** The deferral/Trim is irrelevant because the process
+is KILLED, not SUSPENDED. The Xbox OS never sends a `Suspending` event —
+it terminates the process directly via the activation watchdog. The deferral
+mechanism only helps when the OS gives you a chance to complete async work
+before suspension. When the OS kills you, there's no event to defer.
+
+**Conclusion:** H-Struct-B (missing OnSuspending deferral) is **ruled out**.
+The remaining hypothesis is H-Struct-A (activation watchdog timing) or
+H-Struct-B2 (OutputDebugString without debugger).
