@@ -319,21 +319,26 @@ void DX::DeviceResources::CreateWindowSizeDependentResources()
 
 		// Query display refresh rate from DXGI for auto-cycle pacing.
 		{
+			m_displayRefreshRate = 60.0f; // safe default
 			ComPtr<IDXGIOutput> dxgiOutput;
 			if (SUCCEEDED(m_swapChain->GetContainingOutput(&dxgiOutput)))
 			{
 				DXGI_OUTPUT_DESC outputDesc;
 				if (SUCCEEDED(dxgiOutput->GetDesc(&outputDesc)))
 				{
-					// Get the current display mode to extract refresh rate
 					DXGI_MODE_DESC mode = {};
 					mode.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 					mode.Width = lround(m_d3dRenderTargetSize.Width);
 					mode.Height = lround(m_d3dRenderTargetSize.Height);
 					DXGI_MODE_DESC closest = {};
-					if (SUCCEEDED(dxgiOutput->FindClosestMatchingMode(&mode, &closest, nullptr)) && closest.RefreshRate.Numerator > 0)
+					HRESULT hr = dxgiOutput->FindClosestMatchingMode(&mode, &closest, nullptr);
+					if (SUCCEEDED(hr) && closest.RefreshRate.Numerator > 0 && closest.RefreshRate.Denominator > 0)
 					{
 						m_displayRefreshRate = (float)closest.RefreshRate.Numerator / (float)closest.RefreshRate.Denominator;
+					}
+					else
+					{
+						BootTrace(L"FindClosestMatchingMode failed/invalid — fallback 60Hz");
 					}
 				}
 			}

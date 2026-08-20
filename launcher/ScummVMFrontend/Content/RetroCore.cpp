@@ -211,13 +211,16 @@ void RetroCore::PaceFrame()
 void RetroCore::EmulationThreadMain()
 {
     spdlog::info("[RetroCore] emulation thread started (tid=0x{:08X})", (uint32_t)GetCurrentThreadId());
+    BootTrace(L"emu: thread enter");
 
     s_initialized.store(InitCore());
     if (!s_initialized.load())
     {
         spdlog::error("[RetroCore] InitCore FAILED on emulation thread");
+        BootTrace(L"emu: retro_init FAILED");
         return;
     }
+    BootTrace(L"emu: retro_init ok");
 
     while (!s_stopRequested.load())
     {
@@ -360,9 +363,11 @@ bool RetroCore::IsInitialized() const { return s_initialized.load(); }
 bool RetroCore::LoadGameInternal(const std::wstring& uwpPath, const std::vector<uint8_t>& romData)
 {
     OutputDebugStringA("[scummvm-uwp] LoadGameInternal enter\n");
+    BootTrace(L"emu: load_game begin");
     if (!s_initialized.load())
     {
         OutputDebugStringA("[scummvm-uwp] LoadGameInternal FAILED: not initialized\n");
+        BootTrace(L"emu: load_game FAILED (not initialized)");
         return false;
     }
 
@@ -373,6 +378,7 @@ bool RetroCore::LoadGameInternal(const std::wstring& uwpPath, const std::vector<
         if (!CoreDll::retro_load_game(nullptr))
         {
             spdlog::error("[RetroCore] CoreDll::retro_load_game(NULL) FAILED");
+            BootTrace(L"emu: retro_load_game(NULL) FAILED");
             return false;
         }
     }
@@ -419,6 +425,7 @@ bool RetroCore::LoadGameInternal(const std::wstring& uwpPath, const std::vector<
     s_loaded.store(true);
     s_lastPresentedSeq.store(0, std::memory_order_release);
     OutputDebugStringA("[scummvm-uwp] retro_load_game SUCCESS\n");
+    BootTrace(L"emu: load_game ok");
     return true;
 }
 
@@ -467,8 +474,21 @@ void RetroCore::RunFrame()
 
     static int frameCount = 0;
     frameCount++;
+    if (frameCount == 1)
+        BootTrace(L"emu: first retro_run begin");
     if (frameCount == 1 || (frameCount % 60) == 0)
+    {
         spdlog::info("[RetroCore] RunFrame #{}", frameCount);
+        char hb[120];
+        sprintf_s(hb, "emu: frame #%d (tid=0x%04X)", frameCount, (unsigned)GetCurrentThreadId());
+        BootTrace(hb);
+    }
+    if ((frameCount % 600) == 0)
+    {
+        char hb[80];
+        sprintf_s(hb, "emu: run heartbeat #%d", frameCount);
+        BootTrace(hb);
+    }
 
     // DIAGNOSTIC: pause.txt holds the emu thread 120s before the first
     // retro_run so a debugger can attach and set death breakpoints.
@@ -496,11 +516,18 @@ void RetroCore::RunFrame()
     static int sehRunCount = 0;
     __try
     {
+        if (frameCount <= 3 || (frameCount % 600) == 0)
+            BootTrace(L"emu: retro_run() calling");
         CoreDll::retro_run();
+        if (frameCount <= 3 || (frameCount % 600) == 0)
+            BootTrace(L"emu: retro_run() returned");
     }
     __except (sehRunCount++, 1)
     {
         spdlog::error("[RetroCore] retro_run SEH exception code=0x{:08X} (count={})", (unsigned)GetExceptionCode(), sehRunCount);
+        char seh[128];
+        sprintf_s(seh, "emu: retro_run SEH exception code=0x%08X count=%d", (unsigned)GetExceptionCode(), sehRunCount);
+        BootTrace(seh);
     }    QueryPerformanceCounter(&t2);
 
     s_emulatedFrameCount.fetch_add(1);
@@ -1004,7 +1031,12 @@ void RetroCore::retro_video(const void* data, unsigned w, unsigned h, size_t pit
 
     g_videoFrameCount++;
     if (g_videoFrameCount == 1)
+    {
         spdlog::info("[scummvm-uwp] retro_video FIRST REAL FRAME: {}x{} pitch={}", w, h, pitch);
+        char vf[128];
+        sprintf_s(vf, "emu: first video frame %ux%u pitch=%zu", w, h, pitch);
+        BootTrace(vf);
+    }
 
     // Log resolution changes
     {

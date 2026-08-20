@@ -209,6 +209,7 @@ namespace scummvm_uwp
             if (needExtract)
             {
                 spdlog::info("[bootstrap] extracting scummvm.zip -> {}", systemDir);
+                BootTrace(L"bootstrap: extract start");
                 std::wstring tmpDir = systemDir + L".tmp";
                 std::error_code ec;
                 fs::remove_all(tmpDir, ec);
@@ -231,13 +232,22 @@ namespace scummvm_uwp
                     if (ec)
                     {
                         spdlog::error("[bootstrap] rename {} -> {} failed", tmpDir, systemDir);
+                        BootTrace(L"bootstrap: rename FAILED");
                         ok = false;
                     }
+                }
+                else
+                {
+                    BootTrace(L"bootstrap: extract FAILED");
                 }
                 if (!ok)
                 {
                     fs::remove_all(tmpDir, ec);
                     spdlog::error("[bootstrap] staging FAILED — falling back to existing dir if present");
+                }
+                else
+                {
+                    BootTrace(L"bootstrap: extract ok");
                 }
             }
 
@@ -284,9 +294,11 @@ namespace scummvm_uwp
         fs::create_directories(saveDir, ec);
 
         spdlog::info("[bootstrap] LocalState root (system={}, saves={})", systemDir, saveDir);
+        BootTrace(L"bootstrap: begin");
         // Always LocalState (desktop and Xbox): the internal SSD is fast and
         // version-gating via .scummvm-ready re-stages cleanly on updates.
         StageIfNeeded(systemDir, saveDir, GetAppVersionString(), /*gateByVersion=*/true);
+        BootTrace(L"bootstrap: stage done");
 
         DataPaths::SetPaths(systemDir, saveDir);
         spdlog::info("[bootstrap] SYSTEM_DIR={}", DataPaths::g_systemDirUtf8);

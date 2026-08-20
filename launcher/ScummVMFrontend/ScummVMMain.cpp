@@ -30,28 +30,18 @@ ScummVMMain::ScummVMMain(const std::shared_ptr<DX::DeviceResources>& deviceResou
     m_retroD3D11 = std::make_unique<RetroD3D11Renderer>(deviceResources);
     m_deviceResources->RegisterDeviceNotify(this);
 
+    BootTrace(L"renderer init begin");
     CreateWindowSizeDependentResources();
-}
-
-void ScummVMMain::EnsureBoot()
-{
-    if (m_bootStarted)
-        return;
-    m_bootStarted = true;
-
-    LARGE_INTEGER t0, t1;
-    QueryPerformanceFrequency(&m_bootFreq);
-    QueryPerformanceCounter(&t0);
-
-    BootCore();
-
-    QueryPerformanceCounter(&t1);
-    double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / m_bootFreq.QuadPart;
-    spdlog::info("[scummvm-uwp] EnsureBoot: took {:.0f}ms", ms);
+    BootTrace(L"renderer init done");
 }
 
 ScummVMMain::~ScummVMMain()
 {
+    // If boot is still running on background thread, wait for it to finish
+    // before destroying members that the boot thread may be writing to.
+    if (m_bootFuture.valid())
+        m_bootFuture.wait();
+
     m_deviceResources->RegisterDeviceNotify(nullptr);
     if (m_retroCore)
     {
@@ -62,48 +52,57 @@ ScummVMMain::~ScummVMMain()
     CoreDll::Unload();
 }
 
-void ScummVMMain::BootCore()
+bool ScummVMMain::BootCore()
 {
-    spdlog::info("[scummvm-uwp] --- boot ---");
+    spdlog::info("[scummvm-uwp] --- boot (async) ---");
+    BootTrace(L"boot: begin");
 
     Bootstrap::Run();
+    BootTrace(L"boot: bootstrap done");
 
     // DIAGNOSTIC: nocore.txt in LocalState skips core init/load entirely —
     // isolates "core kills the process" vs "environment kills the app".
     if (Bootstrap::FileExistsInLocalState(L"nocore.txt"))
     {
         spdlog::warn("[scummvm-uwp] nocore.txt present — skipping core init/load (diagnostic)");
+        BootTrace(L"boot: nocore.txt — core skipped");
         m_retroCore = std::make_unique<RetroCore>();
         m_retroRunning = true;
-        return;
+        return true;
     }
 
     m_xaudio2 = std::make_unique<XAudio2Output>();
     if (!m_xaudio2->Initialize())
     {
         spdlog::error("[scummvm-uwp] XAudio2 init FAILED");
-        m_bootFailed = true;
-        return;
+        BootTrace(L"boot: XAudio2 init FAILED");
+        return false;
     }
+    BootTrace(L"boot: XAudio2 init ok");
 
     // DIAGNOSTIC: nload.txt skips LoadGame (InitCore runs) — isolates which
     // core stage kills the process.
     if (Bootstrap::FileExistsInLocalState(L"nload.txt"))
     {
         spdlog::warn("[scummvm-uwp] nload.txt present — skipping LoadGame (diagnostic)");
+        BootTrace(L"boot: nload.txt — LoadGame skipped");
         m_retroRunning = true;
-        return;
+        return true;
     }
 
     // No-game boot: the ScummVM core opens its own GUI.
     std::wstring corePath = InstalledLocationDir() + L"\\cores\\scummvm_libretro.dll";
+    BootTrace(L"boot: core load begin");
     if (!CoreDll::Load(corePath.c_str()))
     {
-        spdlog::error("[scummvm-uwp] core load FAILED: {}", corePath);
-        m_bootFailed = true;
-        return;
+        DWORD gle = GetLastError();
+        spdlog::error("[scummvm-uwp] core load FAILED: {} gle={:08X}", corePath, gle);
+        BootTrace(L"boot: core load FAILED");
+        return false;
     }
+    BootTrace(L"boot: core loaded");
     PatchExitProcessImports();
+    BootTrace(L"boot: IAT hooks patched");
 
     RetroCore::SetAudioOutput(m_xaudio2.get());
 
@@ -111,14 +110,17 @@ void ScummVMMain::BootCore()
     if (!m_retroCore->Init())
     {
         spdlog::error("[scummvm-uwp] RetroCore::Init FAILED");
-        m_bootFailed = true;
-        return;
+        BootTrace(L"boot: emu thread FAILED");
+        return false;
     }
+    BootTrace(L"boot: emu thread started");
 
     // No-game boot: the ScummVM core opens its own GUI.
     m_retroCore->LoadGame(L"", {});
+    BootTrace(L"boot: load_game enqueued");
     m_retroRunning = true;
     spdlog::info("[scummvm-uwp] core booted — ScummVM GUI expected");
+    return true;
 }
 
 void ScummVMMain::CreateWindowSizeDependentResources()
@@ -128,7 +130,34 @@ void ScummVMMain::CreateWindowSizeDependentResources()
 
 void ScummVMMain::Update()
 {
-    EnsureBoot();
+    // Launch async boot on first Update — AFTER SetWindow/Run so D3D11 swap
+    // chain exists. Xbox kills process if no Present() within ~250ms.
+    if (!m_bootStarted)
+    {
+        m_bootStarted = true;
+        m_bootFuture = std::async(std::launch::async, [this]() -> bool
+        {
+            CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            bool ok = BootCore();
+            CoUninitialize();
+            return ok;
+        });
+        BootTrace(L"boot: async boot launched");
+    }
+
+    // Check async boot completion (non-blocking).
+    if (m_bootStarted && !m_retroRunning && !m_bootFailed)
+    {
+        if (m_bootFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+        {
+            bool ok = m_bootFuture.get();
+            m_bootFailed = !ok;
+            if (ok)
+                spdlog::info("[scummvm-uwp] async boot completed OK");
+            else
+                spdlog::error("[scummvm-uwp] async boot FAILED");
+        }
+    }
 
     static int step = 0;
     step++;
@@ -194,6 +223,8 @@ void ScummVMMain::UpdateRetroPad()
     m_sdlInput->GetRightStick(rx, ry);
     RetroCore::SetAnalogAxis(0, RETRO_DEVICE_ID_ANALOG_X, (int16_t)(lx * 32767.0f));
     RetroCore::SetAnalogAxis(0, RETRO_DEVICE_ID_ANALOG_Y, (int16_t)(-ly * 32767.0f));
+    RetroCore::SetAnalogAxis(1, RETRO_DEVICE_ID_ANALOG_X, (int16_t)(rx * 32767.0f));
+    RetroCore::SetAnalogAxis(1, RETRO_DEVICE_ID_ANALOG_Y, (int16_t)(-ry * 32767.0f));
 }
 
 bool ScummVMMain::Render()

@@ -1,5 +1,7 @@
 #pragma once
 
+#define FRONTEND_VERSION "2026.8.20"
+
 // Minimal spdlog-compatible shim: everything logs to OutputDebugString.
 // No fmt/spdlog dependency. Supports `{}` and `{:0NdX}` / `{:0NdX}` hex specs.
 #include <windows.h>
@@ -32,6 +34,19 @@ namespace spdlog
 
     namespace detail
     {
+        inline std::string wallclock_ms()
+        {
+            // Returns "[HH:MM:SS.mmm]" — wall clock with millisecond precision.
+            // Used as prefix on every log line for cross-reference with device
+            // clocks and log collection timestamps.
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            char buf[32];
+            sprintf_s(buf, "[%02d:%02d:%02d.%03d]",
+                st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+            return std::string(buf);
+        }
+
         inline std::string utf8_from_wide(const wchar_t* src)
         {
             if (!src)
@@ -142,7 +157,7 @@ namespace spdlog
         static std::wstring s_fallback = [] {
             wchar_t env[512] = { 0 };
             DWORD len = GetEnvironmentVariableW(L"LOCALAPPDATA", env, 511);
-            return len ? std::wstring(env) + L"\\scummvm-frontend.log" : std::wstring(L"scummvm-frontend.log");
+            return len ? std::wstring(env) + L"\\scummvm-debug.log" : std::wstring(L"scummvm-debug.log");
         }();
         const std::wstring& path = g_logPath.empty() ? s_fallback : g_logPath;
 
@@ -166,7 +181,7 @@ namespace spdlog
         case level::warn: prefix = "[WARN] "; break;
         default: break;
         }
-        ods((std::string(prefix) + s + "\n").c_str());
+        ods((detail::wallclock_ms() + std::string(prefix) + s + "\n").c_str());
     }
 
     template <typename... Args> inline void trace(const char* fmt, Args&&... args) { log(level::trace, fmt, args...); }
@@ -213,4 +228,58 @@ inline void LogInit(const wchar_t* logPath)
 inline void LogShutdown()
 {
     spdlog::shutdown();
+}
+
+// BootTrace: ultra-defensive boot-stage marker. Independent of the spdlog
+// formatting machinery; appends one line with tid + ms-since-first-call to the
+// active log file (g_logPath) and flushes. Never throws. Used to find where a
+// silent launch-kill happens (watchdog/activation) when spdlog may never run.
+inline void BootTrace(const wchar_t* stage)
+{
+    if (spdlog::g_logPath.empty())
+        return;
+    try
+    {
+        static const LARGE_INTEGER s_t0 = [] {
+            LARGE_INTEGER t;
+            QueryPerformanceCounter(&t);
+            return t;
+        }();
+        static const LARGE_INTEGER s_freq = [] {
+            LARGE_INTEGER f;
+            QueryPerformanceFrequency(&f);
+            return f;
+        }();
+
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        double ms = (double)(now.QuadPart - s_t0.QuadPart) * 1000.0 / s_freq.QuadPart;
+
+        std::ofstream out(spdlog::g_logPath, std::ios::binary | std::ios::app);
+        if (!out)
+            return;
+        char line[1400];
+        // Wall clock + QPC boot time + thread id for every BootTrace line
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        int n = sprintf_s(line, "[%02d:%02d:%02d.%03d] [boot %07.1fms tid=0x%04X] %ls\r\n",
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+            ms, (unsigned)GetCurrentThreadId(), stage ? stage : L"?");
+        out.write(line, n);
+        out.flush();
+    }
+    catch (...) {}
+}
+
+// UTF-8 variant for narrow strings (core-side messages).
+inline void BootTrace(const char* stage)
+{
+    std::wstring ws;
+    int n = MultiByteToWideChar(CP_UTF8, 0, stage ? stage : "?", -1, nullptr, 0);
+    if (n > 0)
+    {
+        ws.resize(static_cast<size_t>(n) - 1);
+        MultiByteToWideChar(CP_UTF8, 0, stage, -1, &ws[0], n);
+    }
+    BootTrace(ws.c_str());
 }

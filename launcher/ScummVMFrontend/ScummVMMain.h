@@ -2,6 +2,7 @@
 
 #include <d2d1_1.h>
 #include <wrl/client.h>
+#include <future>
 #include "Common\StepTimer.h"
 #include "Common\DeviceResources.h"
 #include "Content\SdlInput.h"
@@ -16,6 +17,9 @@ namespace scummvm_uwp
     // Boot sequence (called from App::OnLaunched):
     //   Bootstrap::Run() -> CoreDll::Load() -> RetroCore::Init() ->
     //   RetroCore::LoadGame(L"", {}) which boots the ScummVM GUI (no-game).
+    // Boot runs async on a background thread to keep UI thread alive —
+    // the Xbox activation watchdog kills the process if Present() doesn't
+    // fire within ~250ms of launch.
     class ScummVMMain : public DX::IDeviceNotify
     {
     public:
@@ -38,8 +42,7 @@ namespace scummvm_uwp
         double GetTargetFps() const { return m_retroCore ? m_retroCore->GetTargetFps() : 60.0; }
 
     private:
-        void EnsureBoot();
-        void BootCore();
+        bool BootCore();
         void UpdateRetroPad();
 
         std::shared_ptr<DX::DeviceResources> m_deviceResources;
@@ -49,7 +52,7 @@ namespace scummvm_uwp
         std::unique_ptr<XAudio2Output> m_xaudio2;
         DX::StepTimer m_timer;
         DirectX::XMVECTORF32 m_clearColor;
-        LARGE_INTEGER m_bootFreq;
+        std::future<bool> m_bootFuture;
         bool m_bootStarted = false;
         bool m_retroRunning = false;
         bool m_paused = false;

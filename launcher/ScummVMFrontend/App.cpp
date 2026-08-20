@@ -4,8 +4,10 @@
 #include <fstream>
 #include <windows.h>
 #include <intrin.h>
+#include <ppltasks.h>
 
 using namespace scummvm_uwp;
+using namespace concurrency;
 
 static std::wstring g_crashLogPath;
 
@@ -13,8 +15,11 @@ static void WriteDebugMarker(const wchar_t* msg)
 {
     try
     {
-        std::wstring p = Windows::Storage::ApplicationData::Current->LocalFolder->Path->Data();
-        std::ofstream f(p + L"\\crash.log", std::ios::app);
+        if (g_crashLogPath.empty())
+            g_crashLogPath = spdlog::g_logPath;
+        if (g_crashLogPath.empty())
+            return;
+        std::ofstream f(g_crashLogPath, std::ios::app);
         if (f)
             f << "[" << std::string(msg, msg + wcslen(msg)) << "]\n";
         f << "[thread id " << std::hex << GetCurrentThreadId() << "]\n";
@@ -52,11 +57,32 @@ static void __cdecl InvalidParameterHandler(const wchar_t* expression,
 // Process-wide first-chance exception observer. Catches exceptions raised on
 // ANY thread — including inside the core's libco coroutine. Also harvests
 // OutputDebugString payloads (DBG_PRINTEXCEPTION) so the core's uwp_log lines
-// land in crash.log even after the process dies.
+// land in scummvm-debug.log even after the process dies.
 static LONG NTAPI FirstChanceExceptionHandler(PEXCEPTION_POINTERS ep)
-{    static volatile LONG s_count = 0;
+{
+    if (ep && ep->ExceptionRecord)
+    {
+        DWORD code = ep->ExceptionRecord->ExceptionCode;
+
+        // ODS (OutputDebugString) — without debugger, these become unhandled
+        // first-chance exceptions and Windows kills the process. CONSUME them.
+        if (code == 0x40010006 || code == 0x40010007 || code == 0x4001000A)
+        {
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        // C++ exception (MSVC CRT throw) — caught by framework try/catch
+        // (e.g. D3D11 debug layer probe in CreateDevice). Not a crash.
+        if (code == 0xe06d7363)
+        {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+    }
+
+    // Real exceptions — log and let the OS handle them.
+    static volatile LONG s_count = 0;
     LONG n = InterlockedIncrement(&s_count);
-    if (n <= 300 && !g_crashLogPath.empty())
+    if (n <= 300 && ep && ep->ExceptionRecord && !g_crashLogPath.empty())
     {
         try
         {
@@ -65,55 +91,46 @@ static LONG NTAPI FirstChanceExceptionHandler(PEXCEPTION_POINTERS ep)
             std::wofstream f(g_crashLogPath, std::ios::app);
             if (f)
             {
-                if (code == 0x40010006 || code == 0x40010007 || code == 0x4001000A)
-                {
-                    // OutputDebugStringA/W payload — captured by the file log
-                    // already (LogHelper + uwp_log redirection); do not read the
-                    // exception payload here (its layout differs per API).
-                }
-                else
-                {
-                    f << L"[VectoredException code=0x" << std::hex << code
-                      << L" addr=0x" << std::hex << addr
-                      << L" tid=0x" << std::hex << GetCurrentThreadId() << L"]\n";
+                f << L"[VectoredException code=0x" << std::hex << code
+                  << L" addr=0x" << std::hex << addr
+                  << L" tid=0x" << std::hex << GetCurrentThreadId() << L"]\n";
 
-                    HMODULE hMod = nullptr;
+                HMODULE hMod = nullptr;
+                if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                        (LPCWSTR)addr, &hMod) && hMod)
+                {
+                    wchar_t modName[260] = L"?";
+                    if (GetModuleFileNameW(hMod, modName, 260) > 0)
+                    {
+                        wchar_t* slash = wcsrchr(modName, L'\\');
+                        f << L"[module] " << (slash ? slash + 1 : modName)
+                          << L" +0x" << std::hex << (ULONG_PTR)(addr - (ULONG_PTR)hMod) << L"\n";
+                    }
+                }
+
+                void* frames[16] = {};
+                USHORT n = RtlCaptureStackBackTrace(0, 16, frames, nullptr);
+                for (USHORT i = 0; i < n; i++)
+                {
+                    ULONG_PTR fa = (ULONG_PTR)frames[i];
+                    HMODULE m = nullptr;
                     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            (LPCWSTR)addr, &hMod) && hMod)
+                            (LPCWSTR)fa, &m) && m)
                     {
-                        wchar_t modName[260] = L"?";
-                        if (GetModuleFileNameW(hMod, modName, 260) > 0)
+                        wchar_t mn[260] = L"?";
+                        if (GetModuleFileNameW(m, mn, 260) > 0)
                         {
-                            wchar_t* slash = wcsrchr(modName, L'\\');
-                            f << L"[module] " << (slash ? slash + 1 : modName)
-                              << L" +0x" << std::hex << (ULONG_PTR)(addr - (ULONG_PTR)hMod) << L"\n";
+                            wchar_t* slash = wcsrchr(mn, L'\\');
+                            f << L"  #" << std::dec << i << L" "
+                              << (slash ? slash + 1 : mn)
+                              << L"+0x" << std::hex << (ULONG_PTR)(fa - (ULONG_PTR)m) << L"\n";
                         }
                     }
-
-                    void* frames[16] = {};
-                    USHORT n = RtlCaptureStackBackTrace(0, 16, frames, nullptr);
-                    for (USHORT i = 0; i < n; i++)
+                    else
                     {
-                        ULONG_PTR fa = (ULONG_PTR)frames[i];
-                        HMODULE m = nullptr;
-                        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                (LPCWSTR)fa, &m) && m)
-                        {
-                            wchar_t mn[260] = L"?";
-                            if (GetModuleFileNameW(m, mn, 260) > 0)
-                            {
-                                wchar_t* slash = wcsrchr(mn, L'\\');
-                                f << L"  #" << std::dec << i << L" "
-                                  << (slash ? slash + 1 : mn)
-                                  << L"+0x" << std::hex << (ULONG_PTR)(fa - (ULONG_PTR)m) << L"\n";
-                            }
-                        }
-                        else
-                        {
-                            f << L"  #" << std::dec << i << L" 0x" << std::hex << fa << L"\n";
-                        }
+                        f << L"  #" << std::dec << i << L" 0x" << std::hex << fa << L"\n";
                     }
                 }
             }
@@ -281,36 +298,93 @@ using namespace Platform;
 App::App() :
     m_windowClosed(false),
     m_windowVisible(true),
-    m_emulationPaused(false)
+    m_emulationPaused(false),
+    m_extSession(nullptr),
+    m_displayRequest(nullptr)
 {
 }
 
 void App::Initialize(CoreApplicationView^ applicationView)
 {
-    std::wstring localFolder = Windows::Storage::ApplicationData::Current->LocalFolder->Path->Data();
-    g_crashLogPath = localFolder + L"\\crash.log";
+    if (!spdlog::g_logPath.empty())
+        g_crashLogPath = spdlog::g_logPath;
+    else
+    {
+        std::wstring localFolder = Windows::Storage::ApplicationData::Current->LocalFolder->Path->Data();
+        g_crashLogPath = localFolder + L"\\scummvm-debug.log";
+        LogInit(g_crashLogPath.c_str());
+    }
     WriteDebugMarker(L"App::Initialize done");
     {
-        std::ofstream m(localFolder + L"\\init-marker.txt", std::ios::app);
-        if (m)
-            m << "Initialize reached; LocalFolder=" << std::string(localFolder.begin(), localFolder.end()) << "\n";
+        // Identity line: confirms WHICH package/version wrote this log.
+        std::wstring id;
+        try
+        {
+            auto pkg = Windows::ApplicationModel::Package::Current;
+            auto ver = pkg->Id->Version;
+            wchar_t vbuf[32] = { 0 };
+            swprintf_s(vbuf, L"%u.%u.%u.%u", ver.Major, ver.Minor, ver.Build, ver.Revision);
+            id = L"pkg=" + std::wstring(pkg->Id->FamilyName->Data()) + L" v=" + vbuf;
+        }
+        catch (...) { id = L"pkg=?"; }
+        BootTrace((id + L" log=" + g_crashLogPath).c_str());
     }
-    LogInit((localFolder + L"\\scummvm-frontend.log").c_str());
+
+    // ExtendedExecution DISABLED for bisect test — dosbox-uwp does NOT use
+    // this API. Hypothesis: a denied request may trigger aggressive OS action.
+    BootTrace(L"ExtendedExecution: DISABLED (bisect test)");
+    /*
+    try
+    {
+        using namespace Windows::ApplicationModel::ExtendedExecution;
+        m_extSession = ref new ExtendedExecutionSession();
+        m_extSession->Reason = ExtendedExecutionReason::Unspecified;
+        m_extSession->Description = L"ScummVM emulation active";
+        auto task = m_extSession->RequestExtensionAsync();
+        OutputDebugStringA("[app] ExtendedExecution request sent\n");
+    }
+    catch (Platform::Exception^ ex)
+    {
+        BootTrace(L"ExtendedExecution request FAILED");
+    }
+    */
+
+    // Synchronous DisplayRequest — tells Xbox OS that this app is actively
+    // using the display. dosbox-uwp uses this pattern and survives without
+    // debugger. Must be released on suspend, re-acquired on resume.
+    try
+    {
+        m_displayRequest = ref new Windows::System::Display::DisplayRequest();
+        m_displayRequest->RequestActive();
+        BootTrace(L"DisplayRequest: active");
+    }
+    catch (Platform::Exception^ ex)
+    {
+        BootTrace(L"DisplayRequest: FAILED");
+    }
+
     applicationView->Activated += ref new TypedEventHandler<CoreApplicationView^, IActivatedEventArgs^>(this, &App::OnActivated);
     CoreApplication::Suspending += ref new EventHandler<SuspendingEventArgs^>(this, &App::OnSuspending);
     CoreApplication::Resuming += ref new EventHandler<Object^>(this, &App::OnResuming);
 
+    BootTrace(L"device resources: create begin");
     m_deviceResources = std::make_shared<DX::DeviceResources>();
-    WriteDebugMarker(L"App::Initialize done");
+    BootTrace(L"device resources: create done");
+
     typedef LONG(NTAPI* PvectHandlerFn)(PEXCEPTION_POINTERS);
     typedef LONG(NTAPI* PaddVectoredFn)(ULONG, PvectHandlerFn);
     PaddVectoredFn fn = (PaddVectoredFn)GetProcAddress(
         GetModuleHandleW(L"kernel32.dll"), "AddVectoredExceptionHandler");
     if (fn != nullptr)
         fn(1, FirstChanceExceptionHandler);
+    BootTrace(L"VEH handler: INSTALLED");
+
     _set_invalid_parameter_handler(InvalidParameterHandler);
     _set_thread_local_invalid_parameter_handler(InvalidParameterHandler);
+
+    BootTrace(L"IAT hooks: patch begin");
     PatchExitProcessImports();
+    BootTrace(L"IAT hooks: INSTALLED");
 }
 
 void App::SetWindow(CoreWindow^ window)
@@ -438,14 +512,40 @@ void App::OnActivated(CoreApplicationView^ applicationView, IActivatedEventArgs^
 
 void App::OnSuspending(Object^ sender, SuspendingEventArgs^ args)
 {
+    // Match dosbox-uwp: proper suspension handling with deferral + Trim.
+    // Without deferral, the OS may consider the app unresponsive and terminate it.
+    SuspendingDeferral^ deferral = args->SuspendingOperation->GetDeferral();
+
     if (m_main)
     {
         m_main->PauseEmulation();
     }
+
+    if (m_displayRequest)
+    {
+        m_displayRequest->RequestRelease();
+    }
+
+    BootTrace(L"App::OnSuspending — requesting deferral");
+    spdlog::info("OnSuspending: deferral requested, pausing emulation");
+
+    create_task([this, deferral]()
+    {
+        m_deviceResources->Trim();
+        BootTrace(L"App::OnSuspending — Trim done, deferral complete");
+        spdlog::info("OnSuspending: Trim done, deferral complete");
+        deferral->Complete();
+    });
 }
 
 void App::OnResuming(Object^ sender, Object^ args)
 {
+    // Re-acquire DisplayRequest (released on suspend) — match dosbox-uwp.
+    if (m_displayRequest)
+    {
+        m_displayRequest->RequestActive();
+    }
+
     if (m_main)
     {
         m_main->ResumeEmulation();

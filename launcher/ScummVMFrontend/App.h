@@ -42,4 +42,6 @@ private:
     bool m_emulationPaused;
     LARGE_INTEGER m_perfFrequency;
     LARGE_INTEGER m_lastFrameTime;
+    Windows::ApplicationModel::ExtendedExecution::ExtendedExecutionSession^ m_extSession;
+    Windows::System::Display::DisplayRequest^ m_displayRequest;
 };
