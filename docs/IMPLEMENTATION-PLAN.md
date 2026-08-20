@@ -103,6 +103,35 @@ em `PORT-PLAN.md`; arquitetura-alvo em `ARCHITECTURE.md`.
 - [ ] CI verde com app único (`.github/workflows/release.yml` — sem RA, sem LFS novo)
 - [ ] Empacotar e cortar release (tag `v...`)
 
+## Fase GL — OpenGL via Mesa (renderização hardware)
+
+Plano detalhado em `docs/opengl-plan/`. Resumo:
+
+### GL.1 — DLLs Mesa no pacote
+- [ ] Copiar `opengl32.dll` + `libgallium_wgl.dll` + `dxil.dll` + `z-1.dll` de `uwp-dep`
+- [ ] Adicionar ao vcxproj como Content
+- [ ] Verificar presence no .appx
+
+### GL.2 — Env handler + SET_HW_RENDER
+- [ ] Responder `SET_HW_RENDER` com true quando `scummvm_video_hw_acceleration=enabled`
+- [ ] Implementar callbacks: `get_proc_address`, `get_framebuffer`, `context_reset`, `context_destroy`
+- [ ] Adicionar membros GL ao ScummVMMain (m_glContext, m_glDC, m_glLib, m_useGL)
+
+### GL.3 — CreateGLContext + split init
+- [ ] `CreateGLContext()`: LoadLibrary → wglCreateContext → wglMakeCurrent
+- [ ] Defer swap chain: CreatePresentationResources() após boot async
+- [ ] GL mode → contexto Mesa; SW mode → D3D11 (fluxo atual)
+
+### GL.4 — Frame presentation GL
+- [ ] video_cb(HW_FRAME_BUFFER_VALID) → m_frameReadyGL = true
+- [ ] Update(): wglSwapBuffers quando frame ready em GL mode
+- [ ] Render(): skip D2D em GL mode
+
+### GL.5 — Cleanup + fallback
+- [ ] Destrutor: wglDeleteContext + FreeLibrary
+- [ ] Fallback SW em todos os pontos de falha GL
+- [ ] Atualizar docs
+
 ---
 
 ## Decisões log

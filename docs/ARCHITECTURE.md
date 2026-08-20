@@ -67,8 +67,8 @@ algumas exigências específicas:
 | `GET_LOG_INTERFACE` | ponte `retro_log_printf` → log do app |
 | `GET_LANGUAGE` | `ENGLISH` |
 | `GET_PLAYLIST_DIRECTORY` | `LocalState` (playlists opcionais) |
-| `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT` | aceitar **RGB565** (modo software) |
-| `GET_MIDI_INTERFACE` / `SET_HW_RENDER` / `GET_INPUT_BITMASKS` | retornar `false` — core cai no fallback interno (synth software, RGB565, consulta por botão) |
+| `RETRO_ENVIRONMENT_SET_PIXEL_FORMAT` | aceitar **RGB565** (modo software) ou **XRGB8888** (modo GL) |
+| `RETRO_ENVIRONMENT_SET_HW_RENDER` | aceitar **quando** `scummvm_video_hw_acceleration=enabled` — frontend fornece GL context via Mesa WGL (ver seção 10) |
 | `SET_CORE_OPTIONS_V` / `SET_VARIABLES` / `GET_VARIABLE` / `GET_VARIABLE_UPDATE` | manter as options do core (defaults) |
 
 ### Vídeo
@@ -196,3 +196,29 @@ Detalhe em `STAGING.md`.
 | retroarch.cfg | seed/rewrite/system_directory | inexistente |
 | Core-missing detection | log marker | inexistente (core é nosso) |
 | E: staging | system + cfg RA real | só dados do ScummVM |
+
+---
+
+## 10. OpenGL mode (Mesa WGL)
+
+O frontend suporta dois modos de rendering, determinados pelo core option
+`scummvm_video_hw_acceleration` lido durante `retro_init()`:
+
+| Modo | Rendering | Apresentação | Swap chain |
+|------|-----------|-------------|------------|
+| Software (atual) | Core: RGB565 em RAM. Frontend: conversão CPU → BGRA8888 | D2D bitmap → D3D11 `Present()` | D3D11 |
+| GL (novo) | Core: OpenGL FBO (GPU). Zero-copy | Mesa: `wglSwapBuffers()` | D3D12 (Mesa) |
+
+**Restrição:** D3D11 e D3D12 não compartilham swap chain no mesmo
+CoreWindow. O frontend tem dois caminhos de inicialização mutuamente
+exclusivos. O modo é decidido após `retro_init()` quando o core chama
+`SET_HW_RENDER`.
+
+**DLLs necessárias** (no package, junto ao exe):
+`opengl32.dll` + `libgallium_wgl.dll` + `dxil.dll` + `z-1.dll` (~15 MB).
+
+**Contexto GL:** WGL via Mesa (`wglCreateContext`/`wglMakeCurrent`).
+Sem SetPixelFormat manual, sem D3D device manual — Mesa cria tudo
+internamente via D3D12.
+
+**Detalhes completos:** `docs/opengl-plan/`
