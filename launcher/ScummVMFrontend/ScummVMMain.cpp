@@ -268,7 +268,7 @@ bool ScummVMMain::Render()
         spdlog::info("[scummvm-uwp] Render() first call (useGL=%d)", (int)m_useGL);
     }
 
-    if (m_useGL && m_glInitialized)
+    if (m_useGL || !m_deviceResources->GetSwapChain())
     {
         return false;
     }
@@ -490,6 +490,13 @@ bool ScummVMMain::InitSDLForGL()
         BootTrace(L"boot: SDL_Init FAILED");
         return false;
     }
+
+    // Release D3D11 swap chain so Mesa WGL/SDL2 can own the CoreWindow exclusively.
+    // Must happen on UI thread before async boot creates GL context.
+    m_deviceResources->ReleasePresentationResources();
+    spdlog::info("[scummvm-uwp] D3D11 swap chain released for GL mode");
+    BootTrace(L"boot: D3D11 swap chain released");
+
     return true;
 }
 

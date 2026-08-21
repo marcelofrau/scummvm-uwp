@@ -52,6 +52,10 @@ namespace DX
 		IWICImagingFactory2*		GetWicImagingFactory() const			{ return m_wicFactory.Get(); }
 		D2D1::Matrix3x2F			GetOrientationTransform2D() const		{ return m_orientationTransform2D; }
 
+	public:
+		// Presentation control — public so GL mode can release D3D11 swap chain.
+		void ReleasePresentationResources();
+
 	private:
 		void CreateDeviceIndependentResources();
 		void CreateDeviceResources();
