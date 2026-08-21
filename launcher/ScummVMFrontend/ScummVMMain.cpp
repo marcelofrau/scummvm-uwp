@@ -436,6 +436,33 @@ void ScummVMMain::CreatePresentationResources()
 
 bool ScummVMMain::CreateGLContext()
 {
+    // Mesa WGL on UWP routes through SDL2 — SDL_Init must be called first
+    // Get SDL2 handle (loaded as dependency of libgallium_wgl.dll)
+    HMODULE sdlLib = GetModuleHandle(L"SDL2.dll");
+    if (!sdlLib)
+    {
+        // Try explicit load if not yet loaded as dependency
+        sdlLib = LoadLibrary(L"SDL2.dll");
+    }
+    if (!sdlLib)
+    {
+        spdlog::error("[scummvm-uwp] SDL2.dll not found");
+        return false;
+    }
+
+    using PFN_SDL_INIT = int (*)(unsigned int);
+    auto sdlInit = (PFN_SDL_INIT)GetProcAddress(sdlLib, "SDL_Init");
+    if (!sdlInit)
+    {
+        spdlog::error("[scummvm-uwp] SDL_Init not found in SDL2.dll");
+        return false;
+    }
+
+    // SDL_INIT_VIDEO = 0x20
+    int initResult = sdlInit(0x20);
+    spdlog::info("[scummvm-uwp] SDL_Init(SDL_INIT_VIDEO) = {}", initResult);
+    BootTrace(L"boot: SDL_Init done");
+
     // Load Mesa WGL forwarder
     m_glLib = LoadLibrary(L"opengl32.dll");
     if (!m_glLib)
