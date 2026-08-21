@@ -155,6 +155,10 @@ void ScummVMMain::Update()
     if (!m_bootStarted)
     {
         m_bootStarted = true;
+
+        // SDL_Init must run on the UI thread — it touches WinRT APIs.
+        InitSDLForGL();
+
         m_bootFuture = std::async(std::launch::async, [this]() -> bool
         {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -434,17 +438,13 @@ void ScummVMMain::CreatePresentationResources()
     BootTrace(L"boot: GL context OK");
 }
 
-bool ScummVMMain::CreateGLContext()
+bool ScummVMMain::InitSDLForGL()
 {
-    // Mesa WGL on UWP routes through SDL2 — SDL_Init must be called first
-    // Get SDL2 handle (loaded as dependency of libgallium_wgl.dll)
-    HMODULE sdlLib = GetModuleHandle(L"SDL2.dll");
-    if (!sdlLib)
-    {
-        // Try explicit load if not yet loaded as dependency
-        sdlLib = LoadLibrary(L"SDL2.dll");
-    }
-    if (!sdlLib)
+    // Load SDL2 — must happen on UI thread because SDL_Init touches WinRT APIs
+    m_sdlLib = GetModuleHandle(L"SDL2.dll");
+    if (!m_sdlLib)
+        m_sdlLib = LoadLibrary(L"SDL2.dll");
+    if (!m_sdlLib)
     {
         spdlog::error("[scummvm-uwp] SDL2.dll not found");
         return false;
@@ -452,15 +452,14 @@ bool ScummVMMain::CreateGLContext()
 
     using PFN_SDL_INIT = int (*)(unsigned int);
     using PFN_SDL_SETMAINREADY = void (*)();
-    auto sdlInit = (PFN_SDL_INIT)GetProcAddress(sdlLib, "SDL_Init");
-    auto sdlSetMainReady = (PFN_SDL_SETMAINREADY)GetProcAddress(sdlLib, "SDL_SetMainReady");
+    auto sdlInit = (PFN_SDL_INIT)GetProcAddress(m_sdlLib, "SDL_Init");
+    auto sdlSetMainReady = (PFN_SDL_SETMAINREADY)GetProcAddress(m_sdlLib, "SDL_SetMainReady");
     if (!sdlInit)
     {
         spdlog::error("[scummvm-uwp] SDL_Init not found in SDL2.dll");
         return false;
     }
 
-    // UWP has its own main() — tell SDL not to hijack it
     if (sdlSetMainReady)
     {
         spdlog::info("[scummvm-uwp] calling SDL_SetMainReady()");
@@ -474,12 +473,22 @@ bool ScummVMMain::CreateGLContext()
 
     if (initResult != 0)
     {
-        // Log SDL error for diagnostics
         using PFN_SDL_GETERROR = const char* (*)();
-        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(sdlLib, "SDL_GetError");
+        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(m_sdlLib, "SDL_GetError");
         const char* err = sdlGetError ? sdlGetError() : "unknown";
         spdlog::error("[scummvm-uwp] SDL_Init FAILED: {} (result={})", err, initResult);
         BootTrace(L"boot: SDL_Init FAILED");
+        return false;
+    }
+    return true;
+}
+
+bool ScummVMMain::CreateGLContext()
+{
+    // SDL must be initialized already (InitSDLForGL on UI thread before async boot)
+    if (!m_sdlLib)
+    {
+        spdlog::error("[scummvm-uwp] CreateGLContext: SDL not initialized");
         return false;
     }
 

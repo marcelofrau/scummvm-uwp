@@ -47,9 +47,11 @@ namespace scummvm_uwp
         // GL mode: set by env handler when core requests SET_HW_RENDER
         bool m_useGL = false;
         void SetGLMode(bool gl) { m_useGL = gl; }
+        bool InitSDLForGL();   // SDL_SetMainReady + SDL_Init — must run on UI thread
         bool CreateGLContext();
         void DestroyGLContext();
         void PresentGLFrame();
+        HMODULE m_sdlLib = nullptr;  // SDL2.dll handle
 
     private:
         bool BootCore();
