@@ -491,8 +491,31 @@ bool ScummVMMain::InitSDLForGL()
         return false;
     }
 
-    // Release D3D11 swap chain so Mesa WGL/SDL2 can own the CoreWindow exclusively.
-    // Must happen on UI thread before async boot creates GL context.
+    // Create SDL window wrapping the CoreWindow — Mesa WGL renders to this.
+    // SDL_CreateWindowFrom expects ICoreWindow* as void* on UWP.
+    using PFN_SDL_CREATEWINDOWFROM = void* (*)(const void*);
+    auto sdlCreateWindowFrom = (PFN_SDL_CREATEWINDOWFROM)GetProcAddress(m_sdlLib, "SDL_CreateWindowFrom");
+    if (!sdlCreateWindowFrom)
+    {
+        spdlog::error("[scummvm-uwp] SDL_CreateWindowFrom not found");
+        return false;
+    }
+
+    Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
+    m_sdlWindow = sdlCreateWindowFrom((const void*)coreWindow);
+    if (!m_sdlWindow)
+    {
+        using PFN_SDL_GETERROR = const char* (*)();
+        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(m_sdlLib, "SDL_GetError");
+        const char* err = sdlGetError ? sdlGetError() : "unknown";
+        spdlog::error("[scummvm-uwp] SDL_CreateWindowFrom FAILED: {}", err);
+        BootTrace(L"boot: SDL_CreateWindowFrom FAILED");
+        return false;
+    }
+    spdlog::info("[scummvm-uwp] SDL_CreateWindowFrom(CoreWindow) OK");
+    BootTrace(L"boot: SDL window created");
+
+    // Release D3D11 swap chain — SDL now owns the CoreWindow presentation.
     m_deviceResources->ReleasePresentationResources();
     spdlog::info("[scummvm-uwp] D3D11 swap chain released for GL mode");
     BootTrace(L"boot: D3D11 swap chain released");
@@ -584,6 +607,14 @@ void ScummVMMain::DestroyGLContext()
     {
         FreeLibrary(m_glLib);
         m_glLib = nullptr;
+    }
+    if (m_sdlWindow && m_sdlLib)
+    {
+        using PFN_SDL_DESTROYWINDOW = void (*)(void*);
+        auto sdlDestroyWindow = (PFN_SDL_DESTROYWINDOW)GetProcAddress(m_sdlLib, "SDL_DestroyWindow");
+        if (sdlDestroyWindow)
+            sdlDestroyWindow(m_sdlWindow);
+        m_sdlWindow = nullptr;
     }
     m_glInitialized = false;
     spdlog::info("[scummvm-uwp] Mesa WGL context destroyed");

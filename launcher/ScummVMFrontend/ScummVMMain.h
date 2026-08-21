@@ -52,6 +52,7 @@ namespace scummvm_uwp
         void DestroyGLContext();
         void PresentGLFrame();
         HMODULE m_sdlLib = nullptr;  // SDL2.dll handle
+        void* m_sdlWindow = nullptr; // SDL_Window* — wraps CoreWindow for Mesa WGL
 
     private:
         bool BootCore();
