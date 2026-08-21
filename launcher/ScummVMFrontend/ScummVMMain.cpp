@@ -451,11 +451,20 @@ bool ScummVMMain::CreateGLContext()
     }
 
     using PFN_SDL_INIT = int (*)(unsigned int);
+    using PFN_SDL_SETMAINREADY = void (*)();
     auto sdlInit = (PFN_SDL_INIT)GetProcAddress(sdlLib, "SDL_Init");
+    auto sdlSetMainReady = (PFN_SDL_SETMAINREADY)GetProcAddress(sdlLib, "SDL_SetMainReady");
     if (!sdlInit)
     {
         spdlog::error("[scummvm-uwp] SDL_Init not found in SDL2.dll");
         return false;
+    }
+
+    // UWP has its own main() — tell SDL not to hijack it
+    if (sdlSetMainReady)
+    {
+        spdlog::info("[scummvm-uwp] calling SDL_SetMainReady()");
+        sdlSetMainReady();
     }
 
     // SDL_INIT_VIDEO = 0x20
