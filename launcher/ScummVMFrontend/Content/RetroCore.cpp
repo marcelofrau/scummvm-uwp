@@ -97,6 +97,8 @@ static std::atomic<uint64_t> s_lastPresentedSeq{ 0 };
 std::atomic<bool> RetroCore::s_vsyncEnabled{ false };
 std::atomic<float> RetroCore::s_displayRefreshRate{ 60.0f };
 std::atomic<bool> RetroCore::s_hwRenderAccepted{ false };
+std::atomic<bool> RetroCore::s_glContextReady{ false };
+void* (*RetroCore::s_wglGetProcFunc)(const char*) = nullptr;
 XAudio2Output* RetroCore::s_audioOutput = nullptr;
 
 static retro_pixel_format s_pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
@@ -717,6 +719,37 @@ void RetroCore::SetOptionValue(const char* key, const char* value)
     }
 }
 
+// --- GL callbacks (called by core during retro_run when in GL mode) ---
+
+uintptr_t RetroCore::s_glGetFramebuffer()
+{
+    // Return default FBO = 0 (Mesa renders to the WGL backbuffer)
+    return 0;
+}
+
+void* RetroCore::s_glGetProcAddress(const char* name)
+{
+    if (!name || !s_wglGetProcFunc) return nullptr;
+    return s_wglGetProcFunc(name);
+}
+
+void RetroCore::SetGLProcFunc(void* (*func)(const char*))
+{
+    s_wglGetProcFunc = func;
+}
+
+void RetroCore::s_glContextReset()
+{
+    spdlog::info("[RetroCore] GL context_reset — reactivating Mesa context");
+    BootTrace(L"emu: GL context_reset");
+}
+
+void RetroCore::s_glContextDestroy()
+{
+    spdlog::info("[RetroCore] GL context_destroy");
+    BootTrace(L"emu: GL context_destroy");
+}
+
 int RetroCore::retro_env(unsigned cmd, void* data)
 {
     char buf[256];
@@ -774,18 +807,11 @@ int RetroCore::retro_env(unsigned cmd, void* data)
             return 0;
         }
 
-        // Check if user enabled HW acceleration via core option
-        std::string hwAccel;
+        // GL context must be ready before accepting HW render — without it,
+        // get_proc_address/get_current_framebuffer are null → AV.
+        if (!s_glContextReady.load())
         {
-            std::lock_guard<std::mutex> lk(s_optionMutex);
-            auto it = s_optionValues.find("scummvm_video_hw_acceleration");
-            if (it != s_optionValues.end())
-                hwAccel = it->second;
-        }
-
-        if (hwAccel != "enabled")
-        {
-            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (scummvm_video_hw_acceleration != enabled)\n");
+            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (GL context not ready)\n");
             return 0;
         }
 
@@ -800,9 +826,13 @@ int RetroCore::retro_env(unsigned cmd, void* data)
             hw->version_major = 0;
             hw->version_minor = 0;
 
-            // Store callbacks — frontend will provide GL context
-            // These are set by ScummVMMain after CreateGLContext
-            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=ACCEPTED (OpenGL)\n");
+            // Provide GL callbacks — these are set by ScummVMMain after CreateGLContext
+            hw->get_current_framebuffer = reinterpret_cast<retro_hw_get_current_framebuffer_t>(s_glGetFramebuffer);
+            hw->get_proc_address = reinterpret_cast<retro_hw_get_proc_address_t>(s_glGetProcAddress);
+            hw->context_reset = s_glContextReset;
+            hw->context_destroy = s_glContextDestroy;
+
+            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=ACCEPTED (OpenGL, callbacks provided)\n");
             spdlog::info("[RetroCore] SET_HW_RENDER ACCEPTED — OpenGL mode enabled");
             s_hwRenderAccepted.store(true);
             return 1;

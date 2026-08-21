@@ -76,6 +76,11 @@ namespace scummvm_uwp
         static void SetPointer(float x, float y, bool down);
         static void SetAudioOutput(class XAudio2Output* output);
         static XAudio2Output* s_audioOutput;
+
+        // GL context support — called by ScummVMMain during boot
+        static std::atomic<bool> s_glContextReady;
+        static void SetGLProcFunc(void* (*func)(const char*));
+
 #ifdef MOUSE_SUPPORT
         static void SetMouseButton(unsigned btn, bool down);
         static void SetMouseWheel(int delta);
@@ -117,6 +122,13 @@ namespace scummvm_uwp
         static std::atomic<int> s_loadResult;
         static std::atomic<bool> s_osdActive;
         static std::atomic<bool> s_hwRenderAccepted;
+
+        // GL callbacks
+        static uintptr_t s_glGetFramebuffer();
+        static void* s_glGetProcAddress(const char* name);
+        static void s_glContextReset();
+        static void s_glContextDestroy();
+        static void* (*s_wglGetProcFunc)(const char*);
         static std::atomic<uint64_t> s_emulatedFrameCount;
         static std::atomic<double> s_targetFps;
         static std::atomic<unsigned> s_latestW;

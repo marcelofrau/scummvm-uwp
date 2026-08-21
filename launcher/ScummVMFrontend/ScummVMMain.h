@@ -68,7 +68,6 @@ namespace scummvm_uwp
         bool m_paused = false;
         bool m_bootFailed = false;
         bool m_glInitialized = false;
-        bool m_glTestDone = false;
 
         // Mesa WGL GL context
         HGLRC m_glContext = nullptr;

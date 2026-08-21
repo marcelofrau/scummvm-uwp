@@ -104,6 +104,26 @@ bool ScummVMMain::BootCore()
     PatchExitProcessImports();
     BootTrace(L"boot: IAT hooks patched");
 
+    // Create GL context BEFORE emu thread starts, so SET_HW_RENDER has
+    // working callbacks when the core requests them during retro_init.
+    spdlog::info("[scummvm-uwp] boot: attempting GL context creation (pre-emu)");
+    BootTrace(L"boot: GL context begin");
+    if (CreateGLContext())
+    {
+        // Wire GL callbacks through RetroCore
+        RetroCore::SetGLProcFunc(m_wglGetProcAddress);
+        RetroCore::s_glContextReady.store(true);
+        m_useGL = true;
+        spdlog::info("[scummvm-uwp] boot: Mesa WGL context ready — GL mode enabled");
+        BootTrace(L"boot: GL context OK — GL mode enabled");
+    }
+    else
+    {
+        spdlog::warn("[scummvm-uwp] boot: GL context FAILED — software mode fallback");
+        BootTrace(L"boot: GL context FAILED — SW fallback");
+        m_useGL = false;
+    }
+
     RetroCore::SetAudioOutput(m_xaudio2.get());
 
     m_retroCore = std::make_unique<RetroCore>();
@@ -155,42 +175,6 @@ void ScummVMMain::Update()
             if (ok)
             {
                 spdlog::info("[scummvm-uwp] async boot completed OK");
-
-                // DIAGNOSTIC: try creating a GL context to verify Mesa WGL works
-                // on this Xbox CoreWindow. One-shot, logs result, destroys context.
-                if (!m_glTestDone)
-                {
-                    m_glTestDone = true;
-                    spdlog::info("[scummvm-uwp] GL DIAGNOSTIC: attempting CreateGLContext...");
-                    BootTrace(L"boot: GL diagnostic — creating context");
-                    if (CreateGLContext())
-                    {
-                        // Query GL info via wglGetProcAddress
-                        using PFNGLGETSTRING = const unsigned char* (APIENTRY*)(GLenum);
-                        auto glGetString = (PFNGLGETSTRING)m_wglGetProcAddress("glGetString");
-                        if (glGetString)
-                        {
-                            const char* vendor = (const char*)glGetString(0x1F00);  // GL_VENDOR
-                            const char* renderer = (const char*)glGetString(0x1F01); // GL_RENDERER
-                            const char* version = (const char*)glGetString(0x1F02);  // GL_VERSION
-                            spdlog::info("[scummvm-uwp] GL DIAGNOSTIC: vendor='{}' renderer='{}' version='{}'",
-                                vendor ? vendor : "?", renderer ? renderer : "?", version ? version : "?");
-                            BootTrace(L"boot: GL diagnostic — context OK");
-                        }
-                        else
-                        {
-                            spdlog::warn("[scummvm-uwp] GL DIAGNOSTIC: glGetString not found");
-                        }
-                        // Clean up — not using GL for presentation yet
-                        DestroyGLContext();
-                        spdlog::info("[scummvm-uwp] GL DIAGNOSTIC: context destroyed (test only)");
-                    }
-                    else
-                    {
-                        spdlog::error("[scummvm-uwp] GL DIAGNOSTIC: CreateGLContext FAILED");
-                        BootTrace(L"boot: GL diagnostic — FAILED");
-                    }
-                }
             }
             else
                 spdlog::error("[scummvm-uwp] async boot FAILED");
