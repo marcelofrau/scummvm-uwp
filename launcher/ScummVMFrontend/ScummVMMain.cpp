@@ -117,6 +117,7 @@ bool ScummVMMain::BootCore()
         });
         RetroCore::s_glDC = m_glDC;
         RetroCore::s_glContext = m_glContext;
+        RetroCore::s_glSwapBuffersFunc = [this]() { m_wglSwapBuffers(m_glDC); };
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
         spdlog::info("[scummvm-uwp] boot: Mesa WGL context ready — GL mode enabled");

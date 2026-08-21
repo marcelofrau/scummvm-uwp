@@ -99,6 +99,7 @@ std::atomic<float> RetroCore::s_displayRefreshRate{ 60.0f };
 std::atomic<bool> RetroCore::s_hwRenderAccepted{ false };
 std::atomic<bool> RetroCore::s_glContextReady{ false };
 void* (*RetroCore::s_wglGetProcFunc)(const char*) = nullptr;
+std::function<void()> RetroCore::s_glSwapBuffersFunc = nullptr;
 std::function<bool(void*, void*)> RetroCore::s_glMakeCurrentFunc = nullptr;
 void* RetroCore::s_glDC = nullptr;
 void* RetroCore::s_glContext = nullptr;
@@ -1151,6 +1152,23 @@ static uint64_t g_frameSeqCounter = 0;
 
 void RetroCore::retro_video(const void* data, unsigned w, unsigned h, size_t pitch)
 {
+    // HW render mode: core renders to GL FBO, sends RETRO_HW_FRAME_BUFFER_VALID
+    // with pitch=0. Present via wglSwapBuffers on the emu thread (which owns the GL context).
+    if (data == RETRO_HW_FRAME_BUFFER_VALID)
+    {
+        static int hwFrameCount = 0;
+        hwFrameCount++;
+        if (hwFrameCount == 1 || (hwFrameCount % 60) == 0)
+        {
+            spdlog::info("[scummvm-uwp] retro_video HW_FRAME #{}, {}x{}", hwFrameCount, w, h);
+        }
+        if (s_glSwapBuffersFunc)
+        {
+            s_glSwapBuffersFunc();
+        }
+        return;
+    }
+
     if (!data || w == 0 || h == 0 || pitch == 0)
     {
         static int rejectCount = 0;
