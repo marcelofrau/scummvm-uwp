@@ -265,10 +265,14 @@ bool ScummVMMain::Render()
     if (firstRender)
     {
         firstRender = false;
-        spdlog::info("[scummvm-uwp] Render() first call");
+        spdlog::info("[scummvm-uwp] Render() first call (useGL=%d)", (int)m_useGL);
     }
 
-    // Bind the swap-chain back buffer as the render target (dosbox pattern).
+    if (m_useGL && m_glInitialized)
+    {
+        return false;
+    }
+
     auto context = m_deviceResources->GetD3DDeviceContext();
     ID3D11RenderTargetView* targets[1] = { m_deviceResources->GetBackBufferRenderTargetView() };
     context->OMSetRenderTargets(1, targets, m_deviceResources->GetDepthStencilView());
