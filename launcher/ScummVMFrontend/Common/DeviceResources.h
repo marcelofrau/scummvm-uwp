@@ -110,5 +110,6 @@ namespace DX
 
 	public:
 		float GetDisplayRefreshRate() const { return m_displayRefreshRate; }
+		Windows::UI::Core::CoreWindow^ GetCoreWindow() const { return m_window.Get(); }
 	};
 }

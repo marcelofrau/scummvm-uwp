@@ -96,6 +96,7 @@ static std::atomic<uint64_t> s_lastPresentedSeq{ 0 };
 
 std::atomic<bool> RetroCore::s_vsyncEnabled{ false };
 std::atomic<float> RetroCore::s_displayRefreshRate{ 60.0f };
+std::atomic<bool> RetroCore::s_hwRenderAccepted{ false };
 XAudio2Output* RetroCore::s_audioOutput = nullptr;
 
 static retro_pixel_format s_pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
@@ -766,7 +767,48 @@ int RetroCore::retro_env(unsigned cmd, void* data)
     }
     case RETRO_ENVIRONMENT_SET_HW_RENDER:
     {
-        OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (return 0)\n");
+        auto* hw = static_cast<retro_hw_render_callback*>(data);
+        if (!hw)
+        {
+            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (null data)\n");
+            return 0;
+        }
+
+        // Check if user enabled HW acceleration via core option
+        std::string hwAccel;
+        {
+            std::lock_guard<std::mutex> lk(s_optionMutex);
+            auto it = s_optionValues.find("scummvm_video_hw_acceleration");
+            if (it != s_optionValues.end())
+                hwAccel = it->second;
+        }
+
+        if (hwAccel != "enabled")
+        {
+            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (scummvm_video_hw_acceleration != enabled)\n");
+            return 0;
+        }
+
+        // Accept OpenGL context
+        if (hw->context_type == RETRO_HW_CONTEXT_OPENGL ||
+            hw->context_type == RETRO_HW_CONTEXT_OPENGL_CORE ||
+            hw->context_type == RETRO_HW_CONTEXT_OPENGLES2)
+        {
+            hw->context_type = RETRO_HW_CONTEXT_OPENGL;
+            hw->bottom_left_origin = true;
+            hw->cache_context = false;
+            hw->version_major = 0;
+            hw->version_minor = 0;
+
+            // Store callbacks — frontend will provide GL context
+            // These are set by ScummVMMain after CreateGLContext
+            OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=ACCEPTED (OpenGL)\n");
+            spdlog::info("[RetroCore] SET_HW_RENDER ACCEPTED — OpenGL mode enabled");
+            s_hwRenderAccepted.store(true);
+            return 1;
+        }
+
+        OutputDebugStringA("[scummvm-uwp]   SET_HW_RENDER=REJECTED (unsupported context type)\n");
         return 0;
     }
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:

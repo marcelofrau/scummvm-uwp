@@ -121,6 +121,22 @@
       <Link>system\scummvm.zip</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="mesa\opengl32.dll">
+      <Link>opengl32.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="mesa\libgallium_wgl.dll">
+      <Link>libgallium_wgl.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="mesa\dxil.dll">
+      <Link>dxil.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="mesa\z-1.dll">
+      <Link>z-1.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -135,6 +151,9 @@
     <ClInclude Include="Common\DeviceResources.h" />
     <ClInclude Include="Common\DirectXHelper.h" />
     <ClInclude Include="Common\StepTimer.h" />
+    <ClInclude Include="GL\gl.h" />
+    <ClInclude Include="GL\glext.h" />
+    <ClInclude Include="GL\wglext.h" />
     <ClInclude Include="Content\RetroCore.h" />
     <ClInclude Include="Content\RetroD3D11Renderer.h" />
     <ClInclude Include="Content\SdlInput.h" />

@@ -388,3 +388,117 @@ void ScummVMMain::OnDeviceRestored()
 {
     m_retroD3D11->CreateDeviceDependentResources();
 }
+
+// --- OpenGL mode (Mesa WGL) ---
+
+void ScummVMMain::CreatePresentationResources()
+{
+    // Called after boot completes. If core negotiated HW render, switch to GL.
+    if (!m_useGL || m_glInitialized)
+        return;
+
+    spdlog::info("[scummvm-uwp] CreatePresentationResources: switching to GL mode");
+    BootTrace(L"boot: GL mode — creating Mesa context");
+
+    if (!CreateGLContext())
+    {
+        spdlog::error("[scummvm-uwp] GL context creation FAILED — falling back to software");
+        BootTrace(L"boot: GL context FAILED, fallback SW");
+        m_useGL = false;
+        return;
+    }
+
+    spdlog::info("[scummvm-uwp] GL context created successfully");
+    BootTrace(L"boot: GL context OK");
+}
+
+bool ScummVMMain::CreateGLContext()
+{
+    // Load Mesa WGL forwarder
+    m_glLib = LoadLibrary(L"opengl32.dll");
+    if (!m_glLib)
+    {
+        spdlog::error("[scummvm-uwp] Failed to load opengl32.dll (gle={})", GetLastError());
+        return false;
+    }
+
+    // Resolve WGL functions from the forwarder
+    m_wglCreateContext = (PFNWGLCREATECONTEXT)GetProcAddress(m_glLib, "wglCreateContext");
+    m_wglMakeCurrent = (PFNWGLMAKECURRENT)GetProcAddress(m_glLib, "wglMakeCurrent");
+    m_wglDeleteContext = (PFNWGLDELETECONTEXT)GetProcAddress(m_glLib, "wglDeleteContext");
+    m_wglSwapBuffers = (PFNWGLSWAPBUFFERS)GetProcAddress(m_glLib, "wglSwapBuffers");
+    m_wglGetProcAddress = (PFNWGLGETPROCADDRESS)GetProcAddress(m_glLib, "wglGetProcAddress");
+
+    if (!m_wglCreateContext || !m_wglMakeCurrent || !m_wglDeleteContext ||
+        !m_wglSwapBuffers || !m_wglGetProcAddress)
+    {
+        spdlog::error("[scummvm-uwp] Failed to resolve WGL functions");
+        FreeLibrary(m_glLib);
+        m_glLib = nullptr;
+        return false;
+    }
+
+    // Get HDC for the CoreWindow — Mesa's GDI stubs handle the rest
+    // On UWP, HDC is an opaque identifier; Mesa wraps ICoreWindow internally
+    // C++/CX: ^ handles store IUnknown* internally, reinterpret_cast is safe
+    // for the opaque HDC parameter Mesa expects.
+    Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
+    m_glDC = reinterpret_cast<HDC>(coreWindow);
+
+    // Create OpenGL context via Mesa WGL
+    m_glContext = m_wglCreateContext(m_glDC);
+    if (!m_glContext)
+    {
+        DWORD err = GetLastError();
+        spdlog::error("[scummvm-uwp] wglCreateContext FAILED (gle={:08X})", err);
+        FreeLibrary(m_glLib);
+        m_glLib = nullptr;
+        return false;
+    }
+
+    if (!m_wglMakeCurrent(m_glDC, m_glContext))
+    {
+        DWORD err = GetLastError();
+        spdlog::error("[scummvm-uwp] wglMakeCurrent FAILED (gle={:08X})", err);
+        m_wglDeleteContext(m_glContext);
+        m_glContext = nullptr;
+        FreeLibrary(m_glLib);
+        m_glLib = nullptr;
+        return false;
+    }
+
+    m_glInitialized = true;
+    spdlog::info("[scummvm-uwp] Mesa WGL context active");
+    return true;
+}
+
+void ScummVMMain::DestroyGLContext()
+{
+    if (!m_glInitialized)
+        return;
+
+    if (m_glContext)
+    {
+        if (m_wglMakeCurrent)
+            m_wglMakeCurrent(nullptr, nullptr);
+        if (m_wglDeleteContext)
+            m_wglDeleteContext(m_glContext);
+        m_glContext = nullptr;
+    }
+    if (m_glLib)
+    {
+        FreeLibrary(m_glLib);
+        m_glLib = nullptr;
+    }
+    m_glInitialized = false;
+    spdlog::info("[scummvm-uwp] Mesa WGL context destroyed");
+}
+
+void ScummVMMain::PresentGLFrame()
+{
+    if (!m_glInitialized || !m_glDC || !m_wglSwapBuffers)
+        return;
+
+    m_wglSwapBuffers(m_glDC);
+    m_frameReadyGL = false;
+}

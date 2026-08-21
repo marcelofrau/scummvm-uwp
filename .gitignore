@@ -80,6 +80,8 @@ scummvm-uwp_*_x64.zip
 
 # ScummVM libretro core build artifacts (built via ScummVM Makefile)
 scummvm_libretro.dll
+# Mesa GL DLLs (prebuilt from uwp-dep, required for OpenGL mode)
+!launcher/ScummVMFrontend/mesa/*.dll
 # scummvm.zip é VERSIONADO (76MB, contém temas com patch 0001 + data files do core)
 
 session.txt

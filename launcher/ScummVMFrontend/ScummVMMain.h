@@ -10,16 +10,18 @@
 #include "Content\RetroD3D11Renderer.h"
 #include "Content\XAudio2Output.h"
 
+// GL typedefs — minimal, avoids pulling in full Mesa headers
+typedef struct __GLsync* GLsync;
+typedef unsigned int GLuint;
+typedef unsigned int GLenum;
+typedef int GLint;
+typedef int GLsizei;
+typedef unsigned char GLboolean;
+typedef float GLfloat;
+typedef void GLvoid;
+
 namespace scummvm_uwp
 {
-    // Frontend main class: owns the libretro core (dynamically loaded), the
-    // D3D11 video path, the XAudio2 audio path and the UWP gamepad input.
-    // Boot sequence (called from App::OnLaunched):
-    //   Bootstrap::Run() -> CoreDll::Load() -> RetroCore::Init() ->
-    //   RetroCore::LoadGame(L"", {}) which boots the ScummVM GUI (no-game).
-    // Boot runs async on a background thread to keep UI thread alive —
-    // the Xbox activation watchdog kills the process if Present() doesn't
-    // fire within ~250ms of launch.
     class ScummVMMain : public DX::IDeviceNotify
     {
     public:
@@ -27,6 +29,7 @@ namespace scummvm_uwp
         ~ScummVMMain();
 
         void CreateWindowSizeDependentResources();
+        void CreatePresentationResources();
         void Update();
         bool Render();
         void OnKeyEvent(Windows::System::VirtualKey key, bool down, uint32_t scanCode = 0, bool isExtended = false);
@@ -40,6 +43,13 @@ namespace scummvm_uwp
         void Shutdown();
         bool IsLoaded() const { return m_retroCore && m_retroCore->IsLoaded(); }
         double GetTargetFps() const { return m_retroCore ? m_retroCore->GetTargetFps() : 60.0; }
+
+        // GL mode: set by env handler when core requests SET_HW_RENDER
+        bool m_useGL = false;
+        void SetGLMode(bool gl) { m_useGL = gl; }
+        bool CreateGLContext();
+        void DestroyGLContext();
+        void PresentGLFrame();
 
     private:
         bool BootCore();
@@ -57,5 +67,25 @@ namespace scummvm_uwp
         bool m_retroRunning = false;
         bool m_paused = false;
         bool m_bootFailed = false;
+        bool m_glInitialized = false;
+
+        // Mesa WGL GL context
+        HGLRC m_glContext = nullptr;
+        HDC m_glDC = nullptr;
+        HMODULE m_glLib = nullptr;
+        bool m_frameReadyGL = false;
+
+        // WGL function pointers
+        using PFNWGLCREATECONTEXT = HGLRC(WINAPI*)(HDC);
+        using PFNWGLMAKECURRENT = BOOL(WINAPI*)(HDC, HGLRC);
+        using PFNWGLDELETECONTEXT = BOOL(WINAPI*)(HGLRC);
+        using PFNWGLSWAPBUFFERS = BOOL(WINAPI*)(HDC);
+        using PFNWGLGETPROCADDRESS = LPVOID(WINAPI*)(LPCSTR);
+
+        PFNWGLCREATECONTEXT m_wglCreateContext = nullptr;
+        PFNWGLMAKECURRENT m_wglMakeCurrent = nullptr;
+        PFNWGLDELETECONTEXT m_wglDeleteContext = nullptr;
+        PFNWGLSWAPBUFFERS m_wglSwapBuffers = nullptr;
+        PFNWGLGETPROCADDRESS m_wglGetProcAddress = nullptr;
     };
 }

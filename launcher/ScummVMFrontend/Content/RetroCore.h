@@ -116,6 +116,7 @@ namespace scummvm_uwp
         static std::atomic<bool> s_loadInProgress;
         static std::atomic<int> s_loadResult;
         static std::atomic<bool> s_osdActive;
+        static std::atomic<bool> s_hwRenderAccepted;
         static std::atomic<uint64_t> s_emulatedFrameCount;
         static std::atomic<double> s_targetFps;
         static std::atomic<unsigned> s_latestW;
