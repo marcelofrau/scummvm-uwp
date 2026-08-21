@@ -463,6 +463,17 @@ bool ScummVMMain::CreateGLContext()
     spdlog::info("[scummvm-uwp] SDL_Init(SDL_INIT_VIDEO) = {}", initResult);
     BootTrace(L"boot: SDL_Init done");
 
+    if (initResult != 0)
+    {
+        // Log SDL error for diagnostics
+        using PFN_SDL_GETERROR = const char* (*)();
+        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(sdlLib, "SDL_GetError");
+        const char* err = sdlGetError ? sdlGetError() : "unknown";
+        spdlog::error("[scummvm-uwp] SDL_Init FAILED: {} (result={})", err, initResult);
+        BootTrace(L"boot: SDL_Init FAILED");
+        return false;
+    }
+
     // Load Mesa WGL forwarder
     m_glLib = LoadLibrary(L"opengl32.dll");
     if (!m_glLib)
