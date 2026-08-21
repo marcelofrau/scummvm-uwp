@@ -99,6 +99,9 @@ std::atomic<float> RetroCore::s_displayRefreshRate{ 60.0f };
 std::atomic<bool> RetroCore::s_hwRenderAccepted{ false };
 std::atomic<bool> RetroCore::s_glContextReady{ false };
 void* (*RetroCore::s_wglGetProcFunc)(const char*) = nullptr;
+std::function<bool(void*, void*)> RetroCore::s_glMakeCurrentFunc = nullptr;
+void* RetroCore::s_glDC = nullptr;
+void* RetroCore::s_glContext = nullptr;
 XAudio2Output* RetroCore::s_audioOutput = nullptr;
 
 static retro_pixel_format s_pixelFormat = RETRO_PIXEL_FORMAT_RGB565;
@@ -124,6 +127,15 @@ bool RetroCore::Init()
 bool RetroCore::InitCore()
 {
     OutputDebugStringA("[scummvm-uwp] RetroCore::InitCore enter\n");
+
+    // Make GL context current on THIS thread (emu thread) if available.
+    // Core calls get_proc_address during retro_init — needs current context.
+    if (s_glContextReady.load() && s_glMakeCurrentFunc && s_glDC && s_glContext)
+    {
+        bool ok = s_glMakeCurrentFunc(s_glDC, s_glContext);
+        OutputDebugStringA(ok ? "[scummvm-uwp] wglMakeCurrent on emu thread: OK\n"
+                              : "[scummvm-uwp] wglMakeCurrent on emu thread: FAILED\n");
+    }
 
     OutputDebugStringA("[scummvm-uwp] retro_set_environment\n");
     CoreDll::retro_set_environment(retro_env_wrap);

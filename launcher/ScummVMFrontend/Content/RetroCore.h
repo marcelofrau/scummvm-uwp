@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <atomic>
 #include <mutex>
+#include <functional>
 #include <condition_variable>
 #include <thread>
 
@@ -80,6 +81,10 @@ namespace scummvm_uwp
         // GL context support — called by ScummVMMain during boot
         static std::atomic<bool> s_glContextReady;
         static void SetGLProcFunc(void* (*func)(const char*));
+        static void SetGLMakeCurrentFunc(std::function<bool(void*, void*)> func) { s_glMakeCurrentFunc = func; }
+        static std::function<bool(void*, void*)> s_glMakeCurrentFunc;
+        static void* s_glDC;      // HDC for make-current
+        static void* s_glContext; // HGLRC for make-current
 
 #ifdef MOUSE_SUPPORT
         static void SetMouseButton(unsigned btn, bool down);

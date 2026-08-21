@@ -112,6 +112,11 @@ bool ScummVMMain::BootCore()
     {
         // Wire GL callbacks through RetroCore
         RetroCore::SetGLProcFunc(m_wglGetProcAddress);
+        RetroCore::SetGLMakeCurrentFunc([this](void* dc, void* ctx) -> bool {
+            return m_wglMakeCurrent(static_cast<HDC>(dc), static_cast<HGLRC>(ctx)) != FALSE;
+        });
+        RetroCore::s_glDC = m_glDC;
+        RetroCore::s_glContext = m_glContext;
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
         spdlog::info("[scummvm-uwp] boot: Mesa WGL context ready — GL mode enabled");
