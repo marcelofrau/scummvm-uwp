@@ -94,6 +94,7 @@ namespace scummvm_uwp
         bool m_bootFailed = false;
         bool m_glInitialized = false;
         bool m_d3d11ReleasedForGL = false;
+        std::atomic<bool> m_d3d11ReleaseRequested{ false };
 
         // Mesa EGL GL context (replaces WGL+SDL)
         HMODULE m_eglLib = nullptr;  // libEGL.dll handle

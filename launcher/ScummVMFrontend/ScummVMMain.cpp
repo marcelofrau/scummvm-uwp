@@ -275,11 +275,11 @@ bool ScummVMMain::Render()
         spdlog::info("[scummvm-uwp] Render() first call (useGL=%d)", (int)m_useGL);
     }
 
-    if (m_useGL || !m_deviceResources->GetSwapChain())
+    if (m_useGL || m_d3d11ReleaseRequested.load() || !m_deviceResources->GetSwapChain())
     {
         // First time entering GL path: release D3D11 resources on UI thread
-        // (boot thread created EGL context; now safe to tear down D3D11 here)
-        if (m_useGL && !m_d3d11ReleasedForGL)
+        // (boot thread waits for this before creating EGL surface)
+        if (!m_d3d11ReleasedForGL && (m_useGL || m_d3d11ReleaseRequested.load()))
         {
             m_d3d11ReleasedForGL = true;
             m_deviceResources->ReleasePresentationResources();
@@ -594,7 +594,24 @@ bool ScummVMMain::CreateGLContext()
     spdlog::info("[scummvm-uwp] EGL context created");
 
     // Create window surface on the CoreWindow - this is the key step.
-    // RetroArch passes the CoreWindow IInspectable* pointer directly to eglCreateWindowSurface.
+    // But D3D11 must release its swap chain FIRST, otherwise Mesa D3D12 can't
+    // get exclusive CoreWindow access. Signal UI thread and wait.
+    spdlog::info("[scummvm-uwp] requesting D3D11 release before EGL surface...");
+    m_d3d11ReleaseRequested.store(true);
+    // Wait for UI thread to release D3D11 (it checks this flag in Render())
+    auto waitStart = std::chrono::steady_clock::now();
+    while (!m_d3d11ReleasedForGL)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto elapsed = std::chrono::steady_clock::now() - waitStart;
+        if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 3)
+        {
+            spdlog::error("[scummvm-uwp] D3D11 release timeout (3s) — aborting GL");
+            return false;
+        }
+    }
+    spdlog::info("[scummvm-uwp] D3D11 released — creating EGL surface");
+
     Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
     // CoreWindow^ is a WinRT handle; get the ABI IInspectable* pointer for EGL.
     // On UWP, EGL expects the ICoreWindow* (IInspectable*).
