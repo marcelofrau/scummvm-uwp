@@ -312,6 +312,15 @@ static bool retro_env(unsigned cmd, void* data)
                 SDL_GL_MakeCurrent(g_core.window, g_core.glContext);
             g_core.hwRenderAccepted = true;
             spdlog::info("[sdl] SET_HW_RENDER=ACCEPTED (OpenGL via SDL2/Mesa)");
+            // Call context_reset immediately — GL context is already created and current.
+            // The core needs this to initialize its GL resources (shaders, textures, FBOs).
+            if (g_core.contextReset) {
+                spdlog::info("[sdl] calling context_reset() NOW (in handler)");
+                g_core.contextReset();
+                spdlog::info("[sdl] context_reset() done");
+            } else {
+                spdlog::warn("[sdl] context_reset is NULL — core GL resources NOT initialized");
+            }
             return true;
         }
         spdlog::warn("[sdl] SET_HW_RENDER REJECTED (ctx={})", (int)hw->context_type);
@@ -532,14 +541,8 @@ extern "C" int sdl_main(int argc, char* argv[])
     g_core.set_input_poll(retro_input_poll_cb);
     g_core.set_input_state(retro_input_state_cb);
 
-    // Per libretro API: context_reset must be called after GL context creation
-    // and before retro_init — it initializes the core's GL resources (shaders,
-    // textures, FBOs). Without it, GL context is "not valid" per the spec.
-    if (g_core.hwRenderAccepted && g_core.contextReset) {
-        spdlog::info("[sdl] calling context_reset() — core GL resource init");
-        g_core.contextReset();
-        spdlog::info("[sdl] context_reset() done");
-    }
+    // context_reset is already called in the SET_HW_RENDER handler above
+    // (GL context is current at that point).
 
     g_core.init();
     spdlog::info("[sdl] retro_init OK");
