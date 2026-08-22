@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <cstdarg>
 #include <cstdio>
+#include <map>
+#include <string>
 
 #include "SDL2/SDL.h"
 
@@ -96,6 +98,9 @@ static std::atomic<bool> g_audioThreadRunning{ false };
 static std::string g_systemDir;
 static std::string g_saveDir;
 static std::string g_libretroDir;
+
+// ─── Core option values (stored from SET_CORE_OPTIONS, returned via GET_VARIABLE) ──
+static std::map<std::string, std::string> g_coreOptions;
 
 // ─── Core function pointers ─────────────────────────────────────────────
 static struct {
@@ -258,6 +263,14 @@ static bool retro_env(unsigned cmd, void* data)
         auto var = (retro_variable*)data;
         if (!var || !var->key) return false;
         std::string key = var->key;
+        // Check stored core options first
+        auto it = g_coreOptions.find(key);
+        if (it != g_coreOptions.end()) {
+            var->value = it->second.c_str();
+            if (g_coreOptions.size() <= 30) // log first boot's options
+                spdlog::info("[sdl] GET_VARIABLE {} = {} (stored)", key, var->value);
+            return true;
+        }
         if (key == "scummvm_video_hw_acceleration") {
             var->value = "enabled";
             spdlog::info("[sdl] GET_VARIABLE {} = enabled (GL)", key);
@@ -267,24 +280,59 @@ static bool retro_env(unsigned cmd, void* data)
             var->value = "1";
             return true;
         }
+        spdlog::warn("[sdl] GET_VARIABLE {} = NULL (unknown)", key);
         var->value = nullptr;
         return true;
     }
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     {
         auto vars = (retro_core_option_definition*)data;
-        if (vars) for (int i = 0; vars[i].key; i++)
-            spdlog::info("[sdl] core option: {} = {}", vars[i].key,
+        if (vars) for (int i = 0; vars[i].key; i++) {
+            if (vars[i].default_value)
+                g_coreOptions[vars[i].key] = vars[i].default_value;
+            spdlog::info("[sdl] SET_VARIABLES: {} = {}", vars[i].key,
                 vars[i].default_value ? vars[i].default_value : "?");
+        }
         return true;
     }
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
         if (data) *(unsigned*)data = 2;
         return true;
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS:
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
-    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+    {
+        auto opts = (retro_core_option_definition*)data;
+        if (opts) for (int i = 0; opts[i].key; i++) {
+            if (opts[i].default_value)
+                g_coreOptions[opts[i].key] = opts[i].default_value;
+        }
+        spdlog::info("[sdl] SET_CORE_OPTIONS stored {} options", g_coreOptions.size());
         return true;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2:
+    {
+        auto v2 = (retro_core_options_v2*)data;
+        if (v2 && v2->definitions) {
+            for (int i = 0; v2->definitions[i].key; i++) {
+                if (v2->definitions[i].default_value)
+                    g_coreOptions[v2->definitions[i].key] = v2->definitions[i].default_value;
+            }
+        }
+        spdlog::info("[sdl] SET_CORE_OPTIONS_V2 stored {} options", g_coreOptions.size());
+        return true;
+    }
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL:
+    {
+        auto intl = (retro_core_options_v2_intl*)data;
+        if (intl && intl->us) {
+            auto defs = intl->us->definitions;
+            if (defs) for (int i = 0; defs[i].key; i++) {
+                if (defs[i].default_value)
+                    g_coreOptions[defs[i].key] = defs[i].default_value;
+            }
+        }
+        spdlog::info("[sdl] SET_CORE_OPTIONS_V2_INTL stored {} options", g_coreOptions.size());
+        return true;
+    }
     case RETRO_ENVIRONMENT_GET_LANGUAGE:
         if (data) *(unsigned*)data = RETRO_LANGUAGE_ENGLISH;
         return true;
