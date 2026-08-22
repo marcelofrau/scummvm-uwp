@@ -349,7 +349,7 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
             s_frameCount, (uintptr_t)data, w, h, pitch, g_core.hwRenderAccepted.load());
     }
     if (data == RETRO_HW_FRAME_BUFFER_VALID && g_core.hwRenderAccepted.load()) {
-        // Core rendered into our FBO — blit to default framebuffer (screen) at window size
+        // Core rendered into FBO — blit to default framebuffer (screen) at window size
         if (g_core.fbo && g_core.window) {
             typedef void (*FN_glBindFramebuffer)(unsigned int, unsigned int);
             typedef void (*FN_glBlitFramebuffer)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
@@ -363,23 +363,18 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
                 int winW = 0, winH = 0;
                 SDL_GL_GetDrawableSize(g_core.window, &winW, &winH);
 
-                // Read core's viewport from the FBO to know what it rendered
-                typedef void (*FN_glGetIntegerv)(unsigned int, int*);
-                auto _glGetIntegerv = (FN_glGetIntegerv)SDL_GL_GetProcAddress("glGetIntegerv");
-                int vp[4] = { 0, 0, (int)w, (int)h };
-                if (_glGetIntegerv) {
-                    _glGetIntegerv(0x0BA2, vp); // GL_VIEWPORT
-                    if (s_frameCount <= 5) {
-                        spdlog::info("[sdl] core viewport: {}x{} window: {}x{}", vp[2], vp[3], winW, winH);
-                    }
+                if (s_frameCount <= 5) {
+                    spdlog::info("[sdl] blit FBO {} → screen {}x{} (src {}x{})",
+                        g_core.fbo, winW, winH, w, h);
                 }
 
-                // Blit from FBO to screen
-                _glBindFramebuffer(0x8D40, 0); // GL_FRAMEBUFFER = 0
+                // Use GL_READ_FRAMEBUFFER=0x8CA8 and GL_DRAW_FRAMEBUFFER=0x8CA9
+                // so the blit reads from our FBO and writes to the screen
                 _glViewport(0, 0, winW, winH);
-                _glBindFramebuffer(0x8D40, g_core.fbo); // GL_READ_FRAMEBUFFER via GL_FRAMEBUFFER
-                _glBlitFramebuffer(0, 0, vp[2], vp[3], 0, 0, winW, winH, 0x00004000, 0x2600); // GL_COLOR_BUFFER_BIT=0x4000, GL_LINEAR=0x2600
-                _glBindFramebuffer(0x8D40, 0);
+                _glBindFramebuffer(0x8CA8, g_core.fbo);  // GL_READ_FRAMEBUFFER
+                _glBindFramebuffer(0x8CA9, 0);            // GL_DRAW_FRAMEBUFFER = screen
+                _glBlitFramebuffer(0, 0, (int)w, (int)h, 0, 0, winW, winH, 0x00004000, 0x2600); // GL_COLOR_BUFFER_BIT, GL_LINEAR
+                _glBindFramebuffer(0x8CA9, 0);            // reset draw
             }
         }
         SDL_GL_SwapWindow(g_core.window);
