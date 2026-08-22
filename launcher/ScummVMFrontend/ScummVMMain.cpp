@@ -122,7 +122,10 @@ bool ScummVMMain::BootCore()
         });
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
-        spdlog::info("[scummvm-uwp] boot: Mesa EGL context ready -- GL mode enabled");
+        // Release context from boot thread so emu thread can acquire it.
+        // EGL context is thread-local — must be released from creating thread first.
+        m_eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        spdlog::info("[scummvm-uwp] boot: Mesa EGL context ready -- GL mode enabled (released from boot thread)");
         BootTrace(L"boot: EGL context OK -- GL mode enabled");
     }
     else
