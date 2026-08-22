@@ -442,9 +442,8 @@ extern "C" int sdl_main(int argc, char* argv[])
     spdlog::info("[sdl] retro_init OK");
 
     // Load game (no-game = ScummVM GUI)
-    retro_game_info gameInfo = {};
-    gameInfo.path = "ScummVM";
-    if (!g_core.load(&gameInfo)) {
+    spdlog::info("[sdl] calling retro_load_game(NULL) for no-game GUI");
+    if (!g_core.load(nullptr)) {
         spdlog::error("[sdl] retro_load_game FAILED");
     } else {
         spdlog::info("[sdl] retro_load_game OK");
