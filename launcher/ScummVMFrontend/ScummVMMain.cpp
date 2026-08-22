@@ -106,27 +106,29 @@ bool ScummVMMain::BootCore()
 
     // Create GL context BEFORE emu thread starts, so SET_HW_RENDER has
     // working callbacks when the core requests them during retro_init.
-    spdlog::info("[scummvm-uwp] boot: attempting GL context creation (pre-emu)");
-    BootTrace(L"boot: GL context begin");
+    spdlog::info("[scummvm-uwp] boot: attempting EGL context creation (pre-emu)");
+    BootTrace(L"boot: EGL context begin");
     if (CreateGLContext())
     {
-        // Wire GL callbacks through RetroCore
-        RetroCore::SetGLProcFunc(m_wglGetProcAddress);
-        RetroCore::SetGLMakeCurrentFunc([this](void* dc, void* ctx) -> bool {
-            return m_wglMakeCurrent(static_cast<HDC>(dc), static_cast<HGLRC>(ctx)) != FALSE;
+        // Wire GL callbacks through RetroCore — EGL version
+        // get_proc_address: use eglGetProcAddress
+        static auto eglGetProc = m_eglGetProcAddress;
+        RetroCore::SetGLProcFunc([](const char* name) -> void* {
+            return eglGetProc(name);
         });
-        RetroCore::s_glDC = m_glDC;
-        RetroCore::s_glContext = m_glContext;
-        RetroCore::s_glSwapBuffersFunc = [this]() { m_wglSwapBuffers(m_glDC); };
+        // make-current: EGL on emu thread
+        RetroCore::SetGLMakeCurrentFunc([this](void*, void*) -> bool {
+            return m_eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext) != 0;
+        });
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
-        spdlog::info("[scummvm-uwp] boot: Mesa WGL context ready — GL mode enabled");
-        BootTrace(L"boot: GL context OK — GL mode enabled");
+        spdlog::info("[scummvm-uwp] boot: Mesa EGL context ready -- GL mode enabled");
+        BootTrace(L"boot: EGL context OK -- GL mode enabled");
     }
     else
     {
-        spdlog::warn("[scummvm-uwp] boot: GL context FAILED — software mode fallback");
-        BootTrace(L"boot: GL context FAILED — SW fallback");
+        spdlog::warn("[scummvm-uwp] boot: GL context FAILED -- software mode fallback");
+        BootTrace(L"boot: GL context FAILED -- SW fallback");
         m_useGL = false;
     }
 
@@ -161,9 +163,6 @@ void ScummVMMain::Update()
     if (!m_bootStarted)
     {
         m_bootStarted = true;
-
-        // SDL_Init must run on the UI thread — it touches WinRT APIs.
-        InitSDLForGL();
 
         m_bootFuture = std::async(std::launch::async, [this]() -> bool
         {
@@ -425,168 +424,224 @@ void ScummVMMain::OnDeviceRestored()
     m_retroD3D11->CreateDeviceDependentResources();
 }
 
-// --- OpenGL mode (Mesa WGL) ---
+// --- OpenGL mode (Mesa EGL on CoreWindow) ---
+// Following RetroArch UWP pattern: gfx/drivers_context/uwp_egl_ctx.c
+// EGL surface created directly on CoreWindow - no SDL, no WGL.
 
 void ScummVMMain::CreatePresentationResources()
 {
-    // Called after boot completes. If core negotiated HW render, switch to GL.
     if (!m_useGL || m_glInitialized)
         return;
 
     spdlog::info("[scummvm-uwp] CreatePresentationResources: switching to GL mode");
-    BootTrace(L"boot: GL mode — creating Mesa context");
+    BootTrace(L"boot: GL mode -- creating Mesa EGL context");
 
     if (!CreateGLContext())
     {
-        spdlog::error("[scummvm-uwp] GL context creation FAILED — falling back to software");
+        spdlog::error("[scummvm-uwp] GL context creation FAILED -- falling back to software");
         BootTrace(L"boot: GL context FAILED, fallback SW");
         m_useGL = false;
         return;
     }
 
-    spdlog::info("[scummvm-uwp] GL context created successfully");
-    BootTrace(L"boot: GL context OK");
-}
-
-bool ScummVMMain::InitSDLForGL()
-{
-    // Load SDL2 — must happen on UI thread because SDL_Init touches WinRT APIs
-    m_sdlLib = GetModuleHandle(L"SDL2.dll");
-    if (!m_sdlLib)
-        m_sdlLib = LoadLibrary(L"SDL2.dll");
-    if (!m_sdlLib)
-    {
-        spdlog::error("[scummvm-uwp] SDL2.dll not found");
-        return false;
-    }
-
-    using PFN_SDL_INIT = int (*)(unsigned int);
-    using PFN_SDL_SETMAINREADY = void (*)();
-    auto sdlInit = (PFN_SDL_INIT)GetProcAddress(m_sdlLib, "SDL_Init");
-    auto sdlSetMainReady = (PFN_SDL_SETMAINREADY)GetProcAddress(m_sdlLib, "SDL_SetMainReady");
-    if (!sdlInit)
-    {
-        spdlog::error("[scummvm-uwp] SDL_Init not found in SDL2.dll");
-        return false;
-    }
-
-    if (sdlSetMainReady)
-    {
-        spdlog::info("[scummvm-uwp] calling SDL_SetMainReady()");
-        sdlSetMainReady();
-    }
-
-    // SDL_INIT_VIDEO = 0x20
-    int initResult = sdlInit(0x20);
-    spdlog::info("[scummvm-uwp] SDL_Init(SDL_INIT_VIDEO) = {}", initResult);
-    BootTrace(L"boot: SDL_Init done");
-
-    if (initResult != 0)
-    {
-        using PFN_SDL_GETERROR = const char* (*)();
-        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(m_sdlLib, "SDL_GetError");
-        const char* err = sdlGetError ? sdlGetError() : "unknown";
-        spdlog::error("[scummvm-uwp] SDL_Init FAILED: {} (result={})", err, initResult);
-        BootTrace(L"boot: SDL_Init FAILED");
-        return false;
-    }
-
-    // Create SDL window wrapping the CoreWindow — Mesa WGL renders to this.
-    // SDL_CreateWindowFrom expects ICoreWindow* as void* on UWP.
-    using PFN_SDL_CREATEWINDOWFROM = void* (*)(const void*);
-    auto sdlCreateWindowFrom = (PFN_SDL_CREATEWINDOWFROM)GetProcAddress(m_sdlLib, "SDL_CreateWindowFrom");
-    if (!sdlCreateWindowFrom)
-    {
-        spdlog::error("[scummvm-uwp] SDL_CreateWindowFrom not found");
-        return false;
-    }
-
-    Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
-    m_sdlWindow = sdlCreateWindowFrom((const void*)coreWindow);
-    if (!m_sdlWindow)
-    {
-        using PFN_SDL_GETERROR = const char* (*)();
-        auto sdlGetError = (PFN_SDL_GETERROR)GetProcAddress(m_sdlLib, "SDL_GetError");
-        const char* err = sdlGetError ? sdlGetError() : "unknown";
-        spdlog::error("[scummvm-uwp] SDL_CreateWindowFrom FAILED: {}", err);
-        BootTrace(L"boot: SDL_CreateWindowFrom FAILED");
-        return false;
-    }
-    spdlog::info("[scummvm-uwp] SDL_CreateWindowFrom(CoreWindow) OK");
-    BootTrace(L"boot: SDL window created");
-
-    // Release D3D11 swap chain — SDL now owns the CoreWindow presentation.
-    m_deviceResources->ReleasePresentationResources();
-    spdlog::info("[scummvm-uwp] D3D11 swap chain released for GL mode");
-    BootTrace(L"boot: D3D11 swap chain released");
-
-    return true;
+    spdlog::info("[scummvm-uwp] EGL context created successfully");
+    BootTrace(L"boot: EGL context OK");
 }
 
 bool ScummVMMain::CreateGLContext()
 {
-    // SDL must be initialized already (InitSDLForGL on UI thread before async boot)
-    if (!m_sdlLib)
+    // Load libEGL.dll - Mesa's EGL backed by Gallium D3D12
+    m_eglLib = LoadLibrary(L"libEGL.dll");
+    if (!m_eglLib)
     {
-        spdlog::error("[scummvm-uwp] CreateGLContext: SDL not initialized");
+        spdlog::error("[scummvm-uwp] Failed to load libEGL.dll (gle={})", GetLastError());
         return false;
     }
 
-    // Load Mesa WGL forwarder
-    m_glLib = LoadLibrary(L"opengl32.dll");
-    if (!m_glLib)
+    // Resolve all EGL function pointers from libEGL.dll
+    m_eglGetProcAddress = (PFN_EGL_GET_PROC_ADDRESS)GetProcAddress(m_eglLib, "eglGetProcAddress");
+    m_eglGetDisplay = (PFN_EGL_GET_DISPLAY)GetProcAddress(m_eglLib, "eglGetPlatformDisplayEXT");
+    m_eglInitialize = (PFN_EGL_INITIALIZE)GetProcAddress(m_eglLib, "eglInitialize");
+    m_eglChooseConfig = (PFN_EGL_CHOOSE_CONFIG)GetProcAddress(m_eglLib, "eglChooseConfig");
+    m_eglBindAPI = (PFN_EGL_BIND_API)GetProcAddress(m_eglLib, "eglBindAPI");
+    m_eglCreateContext = (PFN_EGL_CREATE_CONTEXT)GetProcAddress(m_eglLib, "eglCreateContext");
+    m_eglCreateWindowSurface = (PFN_EGL_CREATE_WINDOW_SURFACE)GetProcAddress(m_eglLib, "eglCreateWindowSurface");
+    m_eglMakeCurrent = (PFN_EGL_MAKE_CURRENT)GetProcAddress(m_eglLib, "eglMakeCurrent");
+    m_eglSwapBuffers = (PFN_EGL_SWAP_BUFFERS)GetProcAddress(m_eglLib, "eglSwapBuffers");
+    m_eglDestroySurface = (PFN_EGL_DESTROY_SURFACE)GetProcAddress(m_eglLib, "eglDestroySurface");
+    m_eglDestroyContext = (PFN_EGL_DESTROY_CONTEXT)GetProcAddress(m_eglLib, "eglDestroyContext");
+    m_eglTerminate = (PFN_EGL_TERMINATE)GetProcAddress(m_eglLib, "eglTerminate");
+    m_eglQueryString = (PFN_EGL_QUERY_STRING)GetProcAddress(m_eglLib, "eglQueryString");
+    m_eglGetError = (PFN_EGL_GET_ERROR)GetProcAddress(m_eglLib, "eglGetError");
+
+    if (!m_eglGetProcAddress || !m_eglGetDisplay || !m_eglInitialize ||
+        !m_eglChooseConfig || !m_eglBindAPI || !m_eglCreateContext ||
+        !m_eglCreateWindowSurface || !m_eglMakeCurrent || !m_eglSwapBuffers ||
+        !m_eglDestroySurface || !m_eglDestroyContext || !m_eglTerminate ||
+        !m_eglQueryString || !m_eglGetError)
     {
-        spdlog::error("[scummvm-uwp] Failed to load opengl32.dll (gle={})", GetLastError());
+        spdlog::error("[scummvm-uwp] Failed to resolve EGL function pointers from libEGL.dll");
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
+        return false;
+    }
+    spdlog::info("[scummvm-uwp] EGL functions resolved from libEGL.dll");
+    BootTrace(L"boot: EGL functions loaded");
+
+    // Get EGL display - try eglGetPlatformDisplayEXT first (Mesa), then eglGetDisplay
+    // EGL_PLATFORM_ANGLE_EXT = 0x34D0 (ANGLE) or EGL_PLATFORM_DEVICE_EXT = 0x313F
+    // On Mesa, EGL_DEFAULT_DISPLAY works via eglGetDisplay
+    // RetroArch uses eglGetDisplay(EGL_DEFAULT_DISPLAY) for the Mesa path
+
+    // Try eglGetPlatformDisplayEXT with EGL_PLATFORM_DEVICE_EXT
+    using PFN_EGL_GET_PLATFORM_DISPLAY_EXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
+    auto eglGetPlatformDisplayEXT = (PFN_EGL_GET_PLATFORM_DISPLAY_EXT)m_eglGetDisplay;
+
+    const EGLint display_attribs[] = { EGL_NONE };
+    m_eglDisplay = eglGetPlatformDisplayEXT(0x313F /* EGL_PLATFORM_DEVICE_EXT */, nullptr, display_attribs);
+
+    if (m_eglDisplay == EGL_NO_DISPLAY || !m_eglDisplay)
+    {
+        // Fallback: use standard eglGetDisplay
+        using PFN_EGL_GET_DISPLAY_STD = EGLDisplay (*)(void*);
+        auto eglGetDisplayStd = (PFN_EGL_GET_DISPLAY_STD)GetProcAddress(m_eglLib, "eglGetDisplay");
+        if (eglGetDisplayStd)
+        {
+            m_eglDisplay = eglGetDisplayStd(EGL_DEFAULT_DISPLAY);
+        }
+    }
+
+    if (!m_eglDisplay || m_eglDisplay == EGL_NO_DISPLAY)
+    {
+        spdlog::error("[scummvm-uwp] eglGetDisplay FAILED (eglErr={})", m_eglGetError());
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
         return false;
     }
 
-    // Resolve WGL functions from the forwarder
-    m_wglCreateContext = (PFNWGLCREATECONTEXT)GetProcAddress(m_glLib, "wglCreateContext");
-    m_wglMakeCurrent = (PFNWGLMAKECURRENT)GetProcAddress(m_glLib, "wglMakeCurrent");
-    m_wglDeleteContext = (PFNWGLDELETECONTEXT)GetProcAddress(m_glLib, "wglDeleteContext");
-    m_wglSwapBuffers = (PFNWGLSWAPBUFFERS)GetProcAddress(m_glLib, "wglSwapBuffers");
-    m_wglGetProcAddress = (PFNWGLGETPROCADDRESS)GetProcAddress(m_glLib, "wglGetProcAddress");
-
-    if (!m_wglCreateContext || !m_wglMakeCurrent || !m_wglDeleteContext ||
-        !m_wglSwapBuffers || !m_wglGetProcAddress)
+    // Initialize EGL
+    EGLint major = 0, minor = 0;
+    if (!m_eglInitialize(m_eglDisplay, &major, &minor))
     {
-        spdlog::error("[scummvm-uwp] Failed to resolve WGL functions");
-        FreeLibrary(m_glLib);
-        m_glLib = nullptr;
+        spdlog::error("[scummvm-uwp] eglInitialize FAILED (eglErr={})", m_eglGetError());
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
         return false;
     }
+    spdlog::info("[scummvm-uwp] EGL {}.{} initialized", major, minor);
+    BootTrace(L"boot: EGL initialized");
 
-    // Get HDC for the CoreWindow — Mesa's GDI stubs handle the rest
-    // On UWP, HDC is an opaque identifier; Mesa wraps ICoreWindow internally
-    // C++/CX: ^ handles store IUnknown* internally, reinterpret_cast is safe
-    // for the opaque HDC parameter Mesa expects.
+    // Query EGL extensions
+    if (m_eglQueryString)
+    {
+        const char* exts = m_eglQueryString(m_eglDisplay, EGL_EXTENSIONS);
+        if (exts)
+            spdlog::info("[scummvm-uwp] EGL extensions: {}", exts);
+    }
+
+    // Bind OpenGL API (desktop GL, not GLES)
+    if (!m_eglBindAPI(EGL_OPENGL_API))
+    {
+        spdlog::error("[scummvm-uwp] eglBindAPI(EGL_OPENGL_API) FAILED (eglErr={})", m_eglGetError());
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
+        return false;
+    }
+    spdlog::info("[scummvm-uwp] eglBindAPI(EGL_OPENGL_API) OK");
+
+    // Choose config: request OpenGL renderable, window surface, RGBA8888
+    const EGLint config_attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+        EGL_SURFACE_TYPE,    EGL_WINDOW_BIT,
+        EGL_RED_SIZE,        8,
+        EGL_GREEN_SIZE,      8,
+        EGL_BLUE_SIZE,       8,
+        EGL_ALPHA_SIZE,      8,
+        EGL_DEPTH_SIZE,      24,
+        EGL_NONE
+    };
+    EGLint numConfigs = 0;
+    if (!m_eglChooseConfig(m_eglDisplay, config_attribs, &m_eglConfig, 1, &numConfigs) || numConfigs == 0)
+    {
+        spdlog::error("[scummvm-uwp] eglChooseConfig FAILED (eglErr={}, numConfigs={})", m_eglGetError(), numConfigs);
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
+        return false;
+    }
+    spdlog::info("[scummvm-uwp] eglChooseConfig OK ({} configs)", numConfigs);
+
+    // Create OpenGL context - request core profile
+    const EGLint ctx_attribs[] = {
+        0x30FD /* EGL_CONTEXT_MAJOR_VERSION */, 4,
+        0x30E0 /* EGL_CONTEXT_MINOR_VERSION */, 6,
+        0x30FD /* EGL_CONTEXT_OPENGL_PROFILE_MASK */, 0x00000001 /* EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT */,
+        EGL_NONE
+    };
+    m_eglContext = m_eglCreateContext(m_eglDisplay, m_eglConfig, EGL_NO_CONTEXT, ctx_attribs);
+    if (!m_eglContext)
+    {
+        spdlog::warn("[scummvm-uwp] eglCreateContext(4.6 core) FAILED (eglErr={}), trying compat", m_eglGetError());
+        // Fallback: no version requirements
+        m_eglContext = m_eglCreateContext(m_eglDisplay, m_eglConfig, EGL_NO_CONTEXT, nullptr);
+    }
+    if (!m_eglContext)
+    {
+        spdlog::error("[scummvm-uwp] eglCreateContext FAILED (eglErr={})", m_eglGetError());
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
+        return false;
+    }
+    spdlog::info("[scummvm-uwp] EGL context created");
+
+    // Create window surface on the CoreWindow - this is the key step.
+    // RetroArch passes the CoreWindow IInspectable* pointer directly to eglCreateWindowSurface.
     Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
-    m_glDC = reinterpret_cast<HDC>(coreWindow);
+    // CoreWindow^ is a WinRT handle; get the ABI IInspectable* pointer for EGL.
+    // On UWP, EGL expects the ICoreWindow* (IInspectable*).
+    // C++/CX handles can reinterpret_cast to void* (like HDC).
+    EGLNativeWindowType nativeWindow = reinterpret_cast<void*>(coreWindow);
 
-    // Create OpenGL context via Mesa WGL
-    m_glContext = m_wglCreateContext(m_glDC);
-    if (!m_glContext)
+    const EGLint surface_attribs[] = { EGL_RENDER_BUFFER, EGL_BACK_BUFFER, EGL_NONE };
+    m_eglSurface = m_eglCreateWindowSurface(m_eglDisplay, m_eglConfig, nativeWindow, surface_attribs);
+    if (!m_eglSurface)
     {
-        DWORD err = GetLastError();
-        spdlog::error("[scummvm-uwp] wglCreateContext FAILED (gle={:08X})", err);
-        FreeLibrary(m_glLib);
-        m_glLib = nullptr;
+        spdlog::error("[scummvm-uwp] eglCreateWindowSurface FAILED (eglErr={})", m_eglGetError());
+        m_eglDestroyContext(m_eglDisplay, m_eglContext);
+        m_eglContext = EGL_NO_CONTEXT;
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
         return false;
     }
+    spdlog::info("[scummvm-uwp] EGL window surface created on CoreWindow");
 
-    if (!m_wglMakeCurrent(m_glDC, m_glContext))
+    // Make current on this thread
+    if (!m_eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext))
     {
-        DWORD err = GetLastError();
-        spdlog::error("[scummvm-uwp] wglMakeCurrent FAILED (gle={:08X})", err);
-        m_wglDeleteContext(m_glContext);
-        m_glContext = nullptr;
-        FreeLibrary(m_glLib);
-        m_glLib = nullptr;
+        spdlog::error("[scummvm-uwp] eglMakeCurrent FAILED (eglErr={})", m_eglGetError());
+        m_eglDestroySurface(m_eglDisplay, m_eglSurface);
+        m_eglDestroyContext(m_eglDisplay, m_eglContext);
+        m_eglSurface = EGL_NO_SURFACE;
+        m_eglContext = EGL_NO_CONTEXT;
+        m_eglTerminate(m_eglDisplay);
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
         return false;
     }
+    spdlog::info("[scummvm-uwp] eglMakeCurrent OK");
+
+    // Release D3D11 swap chain - EGL now owns the CoreWindow presentation
+    m_deviceResources->ReleasePresentationResources();
+    spdlog::info("[scummvm-uwp] D3D11 swap chain released for EGL/GL mode");
+    BootTrace(L"boot: D3D11 swap chain released for EGL");
 
     m_glInitialized = true;
-    spdlog::info("[scummvm-uwp] Mesa WGL context active");
+    spdlog::info("[scummvm-uwp] Mesa EGL context active");
+    BootTrace(L"boot: EGL context active");
     return true;
 }
 
@@ -595,36 +650,34 @@ void ScummVMMain::DestroyGLContext()
     if (!m_glInitialized)
         return;
 
-    if (m_glContext)
+    if (m_eglDisplay)
     {
-        if (m_wglMakeCurrent)
-            m_wglMakeCurrent(nullptr, nullptr);
-        if (m_wglDeleteContext)
-            m_wglDeleteContext(m_glContext);
-        m_glContext = nullptr;
+        if (m_eglMakeCurrent)
+            m_eglMakeCurrent(m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (m_eglSurface && m_eglDestroySurface)
+            m_eglDestroySurface(m_eglDisplay, m_eglSurface);
+        if (m_eglContext && m_eglDestroyContext)
+            m_eglDestroyContext(m_eglDisplay, m_eglContext);
+        if (m_eglTerminate)
+            m_eglTerminate(m_eglDisplay);
+        m_eglSurface = EGL_NO_SURFACE;
+        m_eglContext = EGL_NO_CONTEXT;
+        m_eglDisplay = EGL_NO_DISPLAY;
     }
-    if (m_glLib)
+    if (m_eglLib)
     {
-        FreeLibrary(m_glLib);
-        m_glLib = nullptr;
-    }
-    if (m_sdlWindow && m_sdlLib)
-    {
-        using PFN_SDL_DESTROYWINDOW = void (*)(void*);
-        auto sdlDestroyWindow = (PFN_SDL_DESTROYWINDOW)GetProcAddress(m_sdlLib, "SDL_DestroyWindow");
-        if (sdlDestroyWindow)
-            sdlDestroyWindow(m_sdlWindow);
-        m_sdlWindow = nullptr;
+        FreeLibrary(m_eglLib);
+        m_eglLib = nullptr;
     }
     m_glInitialized = false;
-    spdlog::info("[scummvm-uwp] Mesa WGL context destroyed");
+    spdlog::info("[scummvm-uwp] Mesa EGL context destroyed");
 }
 
 void ScummVMMain::PresentGLFrame()
 {
-    if (!m_glInitialized || !m_glDC || !m_wglSwapBuffers)
+    if (!m_glInitialized || !m_eglSurface || !m_eglSwapBuffers)
         return;
 
-    m_wglSwapBuffers(m_glDC);
+    m_eglSwapBuffers(m_eglDisplay, m_eglSurface);
     m_frameReadyGL = false;
 }
