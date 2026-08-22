@@ -312,11 +312,20 @@ static bool retro_env(unsigned cmd, void* data)
 }
 
 // ─── Video callback ─────────────────────────────────────────────────────
+static int s_frameCount = 0;
 static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitch)
 {
+    if (++s_frameCount <= 5 || s_frameCount % 300 == 0) {
+        spdlog::info("[sdl] retro_video_cb #{}: data={} w={} h={} pitch={} hw={}",
+            s_frameCount, (uintptr_t)data, w, h, pitch, g_core.hwRenderAccepted.load());
+    }
     if (data == RETRO_HW_FRAME_BUFFER_VALID && g_core.hwRenderAccepted.load()) {
         if (g_core.window) SDL_GL_SwapWindow(g_core.window);
         return;
+    }
+    // SW frame — log first few
+    if (s_frameCount <= 5) {
+        spdlog::info("[sdl] SW frame #{}: w={} h={} pitch={}", s_frameCount, w, h, pitch);
     }
 }
 
@@ -373,29 +382,43 @@ extern "C" int sdl_main(int argc, char* argv[])
 {
     spdlog::info("[sdl] sdl_main entered — " FRONTEND_VERSION);
 
-    // Resolve LocalState via Win32 (no /ZW, can't use ApplicationData)
-    // Same approach as main.cpp ResolveLogPath fallback.
+    // Resolve LocalState from the log path already set by main.cpp
+    // (main.cpp uses ApplicationData::Current->LocalFolder which is correct on Xbox).
     {
-        wchar_t localState[MAX_PATH] = { 0 };
-        // Try ApplicationData via env var first
-        DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", localState, MAX_PATH - 1);
-        if (n > 0 && n < MAX_PATH) {
-            wchar_t fam[256] = { 0 };
-            UINT32 len = 255;
-            if (GetPackageFamilyName(GetCurrentProcess(), &len, fam) == ERROR_SUCCESS) {
-                std::wstring ls = std::wstring(localState) + L"\\Packages\\" + fam + L"\\LocalState";
-                g_systemDir = spdlog::detail::utf8_from_wide((ls + L"\\system").c_str());
-                g_saveDir = spdlog::detail::utf8_from_wide((ls + L"\\saves").c_str());
-                // libretro path = exe directory
-                wchar_t buf[MAX_PATH] = { 0 };
-                DWORD m = GetModuleFileNameW(NULL, buf, MAX_PATH);
-                if (m > 0) {
-                    std::wstring p(buf, m);
-                    auto pos = p.find_last_of(L'\\');
-                    std::wstring dir = (pos != std::wstring::npos) ? p.substr(0, pos) : L".";
-                    g_libretroDir = spdlog::detail::utf8_from_wide(dir.c_str());
-                }
+        std::wstring logPath = spdlog::g_logPath;
+        std::wstring localState;
+        if (!logPath.empty()) {
+            // logPath = <LocalState>\scummvm-debug.log → strip filename
+            auto pos = logPath.find_last_of(L'\\');
+            if (pos != std::wstring::npos)
+                localState = logPath.substr(0, pos);
+        }
+        if (localState.empty()) {
+            // Fallback: LOCALAPPDATA on Xbox already points inside package\AC
+            // LocalState is a sibling: go up from \AC to package root, then \LocalState
+            wchar_t la[MAX_PATH] = { 0 };
+            DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", la, MAX_PATH - 1);
+            if (n > 0 && n < MAX_PATH) {
+                std::wstring s(la);
+                auto ac = s.find(L"\\AC");
+                if (ac != std::wstring::npos && ac + 3 == s.size())
+                    localState = s.substr(0, ac) + L"\\LocalState";
+                else
+                    localState = s + L"\\LocalState";
             }
+        }
+        if (!localState.empty()) {
+            g_systemDir = spdlog::detail::utf8_from_wide((localState + L"\\system").c_str());
+            g_saveDir = spdlog::detail::utf8_from_wide((localState + L"\\saves").c_str());
+        }
+        // libretro path = exe directory
+        wchar_t buf[MAX_PATH] = { 0 };
+        DWORD m = GetModuleFileNameW(NULL, buf, MAX_PATH);
+        if (m > 0) {
+            std::wstring p(buf, m);
+            auto pos = p.find_last_of(L'\\');
+            std::wstring dir = (pos != std::wstring::npos) ? p.substr(0, pos) : L".";
+            g_libretroDir = spdlog::detail::utf8_from_wide(dir.c_str());
         }
     }
 
@@ -524,6 +547,7 @@ extern "C" int sdl_main(int argc, char* argv[])
 
     // Main loop
     bool quit = false;
+    int runCount = 0;
     while (!quit)
     {
         SDL_Event ev;
@@ -603,6 +627,8 @@ extern "C" int sdl_main(int argc, char* argv[])
 
         if (g_core.loaded && g_core.running) {
             g_core.run();
+            if (++runCount <= 3 || runCount % 300 == 0)
+                spdlog::info("[sdl] retro_run #{}", runCount);
         }
 
         if (g_core.shutdownRequested.load()) {
