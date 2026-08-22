@@ -126,6 +126,12 @@ static struct {
     std::atomic<bool> hwRenderAccepted{ false };
     retro_hw_context_reset_t contextReset = nullptr;
 
+    // GL FBO for HW rendering — core renders into this, we blit to screen
+    unsigned int fbo = 0;
+    unsigned int colorRbo = 0;
+    int coreWidth = 0;
+    int coreHeight = 0;
+
     std::atomic<bool> joypadState[16]{};
     std::atomic<int16_t> analogState[4]{};
 } g_core;
@@ -196,8 +202,8 @@ static uintptr_t sdl_get_framebuffer(void)
 {
     static int s_fbCount = 0;
     if (++s_fbCount <= 5)
-        spdlog::info("[sdl] get_framebuffer #{}", s_fbCount);
-    return 0;
+        spdlog::info("[sdl] get_framebuffer #{} → FBO={}", s_fbCount, g_core.fbo);
+    return (uintptr_t)g_core.fbo;
 }
 
 // ─── Env handler ────────────────────────────────────────────────────────
@@ -343,7 +349,40 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
             s_frameCount, (uintptr_t)data, w, h, pitch, g_core.hwRenderAccepted.load());
     }
     if (data == RETRO_HW_FRAME_BUFFER_VALID && g_core.hwRenderAccepted.load()) {
-        if (g_core.window) SDL_GL_SwapWindow(g_core.window);
+        // Core rendered into our FBO — blit to default framebuffer (screen) at window size
+        if (g_core.fbo && g_core.window) {
+            typedef void (*FN_glBindFramebuffer)(unsigned int, unsigned int);
+            typedef void (*FN_glBlitFramebuffer)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+            typedef void (*FN_glViewport)(int, int, int, int);
+
+            auto _glBindFramebuffer = (FN_glBindFramebuffer)SDL_GL_GetProcAddress("glBindFramebuffer");
+            auto _glBlitFramebuffer = (FN_glBlitFramebuffer)SDL_GL_GetProcAddress("glBlitFramebuffer");
+            auto _glViewport = (FN_glViewport)SDL_GL_GetProcAddress("glViewport");
+
+            if (_glBindFramebuffer && _glBlitFramebuffer && _glViewport) {
+                int winW = 0, winH = 0;
+                SDL_GL_GetDrawableSize(g_core.window, &winW, &winH);
+
+                // Read core's viewport from the FBO to know what it rendered
+                typedef void (*FN_glGetIntegerv)(unsigned int, int*);
+                auto _glGetIntegerv = (FN_glGetIntegerv)SDL_GL_GetProcAddress("glGetIntegerv");
+                int vp[4] = { 0, 0, (int)w, (int)h };
+                if (_glGetIntegerv) {
+                    _glGetIntegerv(0x0BA2, vp); // GL_VIEWPORT
+                    if (s_frameCount <= 5) {
+                        spdlog::info("[sdl] core viewport: {}x{} window: {}x{}", vp[2], vp[3], winW, winH);
+                    }
+                }
+
+                // Blit from FBO to screen
+                _glBindFramebuffer(0x8D40, 0); // GL_FRAMEBUFFER = 0
+                _glViewport(0, 0, winW, winH);
+                _glBindFramebuffer(0x8D40, g_core.fbo); // GL_READ_FRAMEBUFFER via GL_FRAMEBUFFER
+                _glBlitFramebuffer(0, 0, vp[2], vp[3], 0, 0, winW, winH, 0x00004000, 0x2600); // GL_COLOR_BUFFER_BIT=0x4000, GL_LINEAR=0x2600
+                _glBindFramebuffer(0x8D40, 0);
+            }
+        }
+        SDL_GL_SwapWindow(g_core.window);
         return;
     }
     // SW frame — log first few
@@ -364,12 +403,16 @@ static void retro_input_poll_cb() {}
 
 static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
+    if (device == RETRO_DEVICE_ANALOG) {
+        // Analog sticks: index 0 = left, index 1 = right
+        if (id == RETRO_DEVICE_ID_ANALOG_X && index == 0) return g_core.analogState[0].load();
+        if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 0) return g_core.analogState[1].load();
+        if (id == RETRO_DEVICE_ID_ANALOG_X && index == 1) return g_core.analogState[2].load();
+        if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 1) return g_core.analogState[3].load();
+        return 0;
+    }
     if (device != RETRO_DEVICE_JOYPAD) return 0;
     if (id < 16) return g_core.joypadState[id].load() ? 1 : 0;
-    if (id == RETRO_DEVICE_ID_ANALOG_X && index == 0) return g_core.analogState[0].load();
-    if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 0) return g_core.analogState[1].load();
-    if (id == RETRO_DEVICE_ID_ANALOG_X && index == 1) return g_core.analogState[2].load();
-    if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 1) return g_core.analogState[3].load();
     return 0;
 }
 
@@ -515,6 +558,44 @@ extern "C" int sdl_main(int argc, char* argv[])
         spdlog::info("[sdl] GL context active — vendor={} renderer={}",
             _glGetString ? (const char*)_glGetString(0x1F00) : "?",   // GL_VENDOR=0x1F00
             _glGetString ? (const char*)_glGetString(0x1F01) : "?");  // GL_RENDERER=0x1F01
+    }
+
+    // Create FBO for HW render — core renders into this, we blit to screen at window size
+    {
+        typedef void (*FN_glGenFramebuffers)(int, unsigned int*);
+        typedef void (*FN_glGenRenderbuffers)(int, unsigned int*);
+        typedef void (*FN_glBindFramebuffer)(unsigned int, unsigned int);
+        typedef void (*FN_glBindRenderbuffer)(unsigned int, unsigned int);
+        typedef void (*FN_glRenderbufferStorage)(unsigned int, unsigned int, int, int);
+        typedef void (*FN_glFramebufferRenderbuffer)(unsigned int, unsigned int, unsigned int, unsigned int);
+
+        auto _glGenFramebuffers = (FN_glGenFramebuffers)SDL_GL_GetProcAddress("glGenFramebuffers");
+        auto _glGenRenderbuffers = (FN_glGenRenderbuffers)SDL_GL_GetProcAddress("glGenRenderbuffers");
+        auto _glBindFramebuffer = (FN_glBindFramebuffer)SDL_GL_GetProcAddress("glBindFramebuffer");
+        auto _glBindRenderbuffer = (FN_glBindRenderbuffer)SDL_GL_GetProcAddress("glBindRenderbuffer");
+        auto _glRenderbufferStorage = (FN_glRenderbufferStorage)SDL_GL_GetProcAddress("glRenderbufferStorage");
+        auto _glFramebufferRenderbuffer = (FN_glFramebufferRenderbuffer)SDL_GL_GetProcAddress("glFramebufferRenderbuffer");
+
+        if (_glGenFramebuffers && _glGenRenderbuffers && _glBindFramebuffer &&
+            _glBindRenderbuffer && _glRenderbufferStorage && _glFramebufferRenderbuffer)
+        {
+            // Get window size for renderbuffer
+            int winW = 0, winH = 0;
+            SDL_GL_GetDrawableSize(g_core.window, &winW, &winH);
+            spdlog::info("[sdl] window drawable size: {}x{}", winW, winH);
+
+            _glGenFramebuffers(1, &g_core.fbo);
+            _glGenRenderbuffers(1, &g_core.colorRbo);
+            _glBindFramebuffer(0x8D40, g_core.fbo); // GL_FRAMEBUFFER = 0x8D40
+            _glBindRenderbuffer(0x8D41, g_core.colorRbo); // GL_RENDERBUFFER = 0x8D41
+            _glRenderbufferStorage(0x8D41, 0x8058, winW, winH); // GL_RGBA8 = 0x8058
+            _glFramebufferRenderbuffer(0x8D40, 0x8CE0, 0x8D41, g_core.colorRbo); // GL_COLOR_ATTACHMENT0 = 0x8CE0
+            _glBindFramebuffer(0x8D40, 0);
+
+            spdlog::info("[sdl] FBO created: id={} rbo={} size={}x{}", g_core.fbo, g_core.colorRbo, winW, winH);
+        } else {
+            spdlog::warn("[sdl] FBO creation failed — GL procs missing");
+        }
     }
 
     // XAudio2 — XAudio2Create already initializes; no separate Initialize() call.
