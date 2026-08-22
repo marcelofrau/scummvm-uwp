@@ -92,6 +92,11 @@ static Xa2Voice g_xa2Voice;
 static int g_audioRate = 48000;
 static std::atomic<bool> g_audioThreadRunning{ false };
 
+// ─── Data paths (resolved via Win32 — no /ZW, no WinRT) ──────────────────
+static std::string g_systemDir;
+static std::string g_saveDir;
+static std::string g_libretroDir;
+
 // ─── Core function pointers ─────────────────────────────────────────────
 static struct {
     HMODULE dll = nullptr;
@@ -273,6 +278,15 @@ static bool retro_env(unsigned cmd, void* data)
         return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
         return false;
+    case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
+        if (data) *(const char**)data = g_systemDir.c_str();
+        return true;
+    case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+        if (data) *(const char**)data = g_saveDir.c_str();
+        return true;
+    case RETRO_ENVIRONMENT_GET_LIBRETRO_PATH:
+        if (data) *(const char**)data = g_libretroDir.c_str();
+        return true;
     case RETRO_ENVIRONMENT_SET_HW_RENDER:
     {
         auto hw = (retro_hw_render_callback*)data;
@@ -358,6 +372,44 @@ static void AudioPullThread()
 extern "C" int sdl_main(int argc, char* argv[])
 {
     spdlog::info("[sdl] sdl_main entered — " FRONTEND_VERSION);
+
+    // Resolve LocalState via Win32 (no /ZW, can't use ApplicationData)
+    // Same approach as main.cpp ResolveLogPath fallback.
+    {
+        wchar_t localState[MAX_PATH] = { 0 };
+        // Try ApplicationData via env var first
+        DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", localState, MAX_PATH - 1);
+        if (n > 0 && n < MAX_PATH) {
+            wchar_t fam[256] = { 0 };
+            UINT32 len = 255;
+            if (GetPackageFamilyName(GetCurrentProcess(), &len, fam) == ERROR_SUCCESS) {
+                std::wstring ls = std::wstring(localState) + L"\\Packages\\" + fam + L"\\LocalState";
+                g_systemDir = spdlog::detail::utf8_from_wide((ls + L"\\system").c_str());
+                g_saveDir = spdlog::detail::utf8_from_wide((ls + L"\\saves").c_str());
+                // libretro path = exe directory
+                wchar_t buf[MAX_PATH] = { 0 };
+                DWORD m = GetModuleFileNameW(NULL, buf, MAX_PATH);
+                if (m > 0) {
+                    std::wstring p(buf, m);
+                    auto pos = p.find_last_of(L'\\');
+                    std::wstring dir = (pos != std::wstring::npos) ? p.substr(0, pos) : L".";
+                    g_libretroDir = spdlog::detail::utf8_from_wide(dir.c_str());
+                }
+            }
+        }
+    }
+
+    // Create dirs if needed
+    {
+        std::wstring ws(g_systemDir.begin(), g_systemDir.end());
+        CreateDirectoryW(ws.c_str(), NULL);
+        ws = std::wstring(g_saveDir.begin(), g_saveDir.end());
+        CreateDirectoryW(ws.c_str(), NULL);
+    }
+
+    spdlog::info("[sdl] SYSTEM_DIR={}", g_systemDir);
+    spdlog::info("[sdl] SAVE_DIR={}", g_saveDir);
+    spdlog::info("[sdl] LIBRETRO_DIR={}", g_libretroDir);
 
     // SDL Init
     SDL_SetMainReady();
