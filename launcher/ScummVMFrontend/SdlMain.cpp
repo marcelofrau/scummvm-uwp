@@ -658,11 +658,13 @@ extern "C" int sdl_main(int argc, char* argv[])
     // Main loop
     bool quit = false;
     int runCount = 0;
+    int evCount = 0, btnCount = 0, axCount = 0, joyBtnCount = 0, joyAxCount = 0;
     while (!quit)
     {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
         {
+            evCount++;
             switch (ev.type)
             {
             case SDL_QUIT:
@@ -690,38 +692,85 @@ extern "C" int sdl_main(int argc, char* argv[])
                 break;
             }
             case SDL_CONTROLLERAXISMOTION:
-            {
-                int16_t val = ev.caxis.value;
-                switch (ev.caxis.axis) {
-                case SDL_CONTROLLER_AXIS_LEFTX:  g_core.analogState[0].store(val); break;
-                case SDL_CONTROLLER_AXIS_LEFTY:  g_core.analogState[1].store(val); break;
-                case SDL_CONTROLLER_AXIS_RIGHTX: g_core.analogState[2].store(val); break;
-                case SDL_CONTROLLER_AXIS_RIGHTY: g_core.analogState[3].store(val); break;
+                axCount++;
+                {
+                    int16_t val = ev.caxis.value;
+                    switch (ev.caxis.axis) {
+                    case SDL_CONTROLLER_AXIS_LEFTX:  g_core.analogState[0].store(val); break;
+                    case SDL_CONTROLLER_AXIS_LEFTY:  g_core.analogState[1].store(val); break;
+                    case SDL_CONTROLLER_AXIS_RIGHTX: g_core.analogState[2].store(val); break;
+                    case SDL_CONTROLLER_AXIS_RIGHTY: g_core.analogState[3].store(val); break;
+                    }
                 }
                 break;
-            }
             case SDL_CONTROLLERBUTTONDOWN:
             case SDL_CONTROLLERBUTTONUP:
-            {
-                bool down = (ev.type == SDL_CONTROLLERBUTTONDOWN);
-                switch (ev.cbutton.button) {
-                case SDL_CONTROLLER_BUTTON_A:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
-                case SDL_CONTROLLER_BUTTON_B:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
-                case SDL_CONTROLLER_BUTTON_X:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
-                case SDL_CONTROLLER_BUTTON_Y:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
-                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
-                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
-                case SDL_CONTROLLER_BUTTON_BACK:          g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
-                case SDL_CONTROLLER_BUTTON_START:         g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
-                case SDL_CONTROLLER_BUTTON_LEFTSTICK:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L3].store(down); break;
-                case SDL_CONTROLLER_BUTTON_RIGHTSTICK:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R3].store(down); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_UP:       g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
+                btnCount++;
+                {
+                    bool down = (ev.type == SDL_CONTROLLERBUTTONDOWN);
+                    switch (ev.cbutton.button) {
+                    case SDL_CONTROLLER_BUTTON_A:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_B:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_X:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_Y:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_BACK:          g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_START:         g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_LEFTSTICK:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L3].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_RIGHTSTICK:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R3].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_UP:       g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
+                    }
                 }
                 break;
-            }
+            case SDL_JOYAXISMOTION:
+                joyAxCount++;
+                {
+                    int16_t val = ev.jaxis.value;
+                    switch (ev.jaxis.axis) {
+                    case 0: g_core.analogState[0].store(val); break; // left X
+                    case 1: g_core.analogState[1].store(val); break; // left Y
+                    case 2: g_core.analogState[2].store(val); break; // right X
+                    case 3: g_core.analogState[3].store(val); break; // right Y
+                    case 4: // left trigger
+                        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L2].store(val > 8192 ? 1 : 0); break;
+                    case 5: // right trigger
+                        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R2].store(val > 8192 ? 1 : 0); break;
+                    }
+                }
+                break;
+            case SDL_JOYBUTTONDOWN:
+            case SDL_JOYBUTTONUP:
+                joyBtnCount++;
+                {
+                    bool down = (ev.type == SDL_JOYBUTTONDOWN);
+                    switch (ev.jbutton.button) {
+                    case 0: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
+                    case 1: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
+                    case 2: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
+                    case 3: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
+                    case 4: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
+                    case 5: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
+                    case 6: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
+                    case 7: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
+                    case 8: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L3].store(down); break;
+                    case 9: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R3].store(down); break;
+                    case 10: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
+                    case 11: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
+                    case 12: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
+                    case 13: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
+                    }
+                }
+                break;
+            case SDL_JOYDEVICEADDED:
+                spdlog::info("[sdl] joystick #{} added (name={})", ev.jdevice.which, SDL_JoystickNameForIndex(ev.jdevice.which));
+                break;
+            case SDL_JOYDEVICEREMOVED:
+                spdlog::info("[sdl] joystick removed");
+                break;
             case SDL_CONTROLLERDEVICEADDED:
                 if (!pad) {
                     pad = SDL_GameControllerOpen(ev.cdevice.which);
@@ -735,10 +784,15 @@ extern "C" int sdl_main(int argc, char* argv[])
 
         if (quit) break;
 
+        // Log input event stats every 300 frames
+        if (++runCount <= 3 || runCount % 300 == 0) {
+            spdlog::info("[sdl] retro_run #{} | events total={} ctrl_btn={} ctrl_ax={} joy_btn={} joy_ax={}",
+                runCount, evCount, btnCount, axCount, joyBtnCount, joyAxCount);
+            evCount = 0; btnCount = 0; axCount = 0; joyBtnCount = 0; joyAxCount = 0;
+        }
+
         if (g_core.loaded && g_core.running) {
             g_core.run();
-            if (++runCount <= 3 || runCount % 300 == 0)
-                spdlog::info("[sdl] retro_run #{}", runCount);
         }
 
         if (g_core.shutdownRequested.load()) {
