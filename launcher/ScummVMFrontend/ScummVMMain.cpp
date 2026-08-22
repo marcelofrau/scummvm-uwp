@@ -173,8 +173,16 @@ void ScummVMMain::Update()
     {
         m_bootStarted = true;
 
-        // Initialize SDL2 + create window on UI thread FIRST (WinRT COM threading)
-        // Then launch async boot which will create GL context on boot thread
+        // Release D3D11 on UI thread FIRST (no blocking — Update IS the UI thread)
+        if (!m_d3d11ReleasedForGL && m_deviceResources->GetSwapChain())
+        {
+            m_d3d11ReleasedForGL = true;
+            m_deviceResources->DestroyDevice();
+            spdlog::info("[scummvm-uwp] D3D11 device destroyed on UI thread for GL mode (pre-SDL)");
+            BootTrace(L"boot: D3D11 destroyed for GL");
+        }
+
+        // Initialize SDL2 + create window on UI thread (WinRT COM threading)
         if (!InitSDLForGL())
         {
             spdlog::error("[scummvm-uwp] InitSDLForGL FAILED — boot aborted");
@@ -489,21 +497,7 @@ bool ScummVMMain::InitSDLForGL()
     spdlog::info("[scummvm-uwp] SDL2 initialized OK");
     BootTrace(L"boot: SDL2 initialized OK");
 
-    // Request D3D11 release BEFORE creating SDL window
-    spdlog::info("[scummvm-uwp] requesting D3D11 release before SDL window...");
-    m_d3d11ReleaseRequested.store(true);
-    auto waitStart = std::chrono::steady_clock::now();
-    while (!m_d3d11ReleasedForGL)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        auto elapsed = std::chrono::steady_clock::now() - waitStart;
-        if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 3)
-        {
-            spdlog::error("[scummvm-uwp] D3D11 release timeout (3s) — aborting GL");
-            return false;
-        }
-    }
-    spdlog::info("[scummvm-uwp] D3D11 released — creating SDL window on UI thread");
+    spdlog::info("[scummvm-uwp] D3D11 already released — creating SDL window on UI thread");
 
     // Get CoreWindow native ABI pointer for SDL_CreateWindowFrom
     Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
