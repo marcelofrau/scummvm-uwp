@@ -120,10 +120,41 @@ bool ScummVMMain::BootCore()
         RetroCore::SetGLMakeCurrentFunc([this](void*, void*) -> bool {
             return m_eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext) != 0;
         });
-        // swap buffers: EGL swap on emu thread
-        RetroCore::SetGLSwapBuffersFunc([this]() {
-            if (m_eglSwapBuffers && m_eglDisplay && m_eglSurface)
-                m_eglSwapBuffers(m_eglDisplay, m_eglSurface);
+        // Resolve GL functions for FBO blit (core renders into its own FBO, not FBO 0)
+        typedef void   (APIENTRY *PFNGLGETINTEGERV)(unsigned int, int*);
+        typedef void   (APIENTRY *PFNGLBINDFRAMEBUFFER)(unsigned int, unsigned int);
+        typedef void   (APIENTRY *PFNGLVIEWPORT)(int, int, int, int);
+        typedef void   (APIENTRY *PFNGLBLITFRAMEBUFFER)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
+        auto glGetIntegerv_   = reinterpret_cast<PFNGLGETINTEGERV>(m_eglGetProcAddress("glGetIntegerv"));
+        auto glBindFramebuffer_= reinterpret_cast<PFNGLBINDFRAMEBUFFER>(m_eglGetProcAddress("glBindFramebuffer"));
+        auto glViewport_      = reinterpret_cast<PFNGLVIEWPORT>(m_eglGetProcAddress("glViewport"));
+        auto glBlitFramebuffer_= reinterpret_cast<PFNGLBLITFRAMEBUFFER>(m_eglGetProcAddress("glBlitFramebuffer"));
+        auto eglSwap = m_eglSwapBuffers;
+        auto eglDpy = m_eglDisplay;
+        auto eglSrf = m_eglSurface;
+        spdlog::info("[scummvm-uwp] GL blit functions resolved: getIntegerv={} bindFBO={} viewport={} blitFBO={}",
+            (void*)glGetIntegerv_, (void*)glBindFramebuffer_, (void*)glViewport_, (void*)glBlitFramebuffer_);
+        // swap buffers: blit core's FBO → FBO 0, then eglSwapBuffers
+        RetroCore::SetGLSwapBuffersFunc([eglSwap, eglDpy, eglSrf,
+                                         glGetIntegerv_, glBindFramebuffer_, glViewport_, glBlitFramebuffer_]() {
+            if (!eglSwap || !eglDpy || !eglSrf) return;
+            if (glGetIntegerv_ && glBindFramebuffer_ && glViewport_ && glBlitFramebuffer_)
+            {
+                // Get core's current FBO (the one it rendered into)
+                int srcFbo = 0;
+                glGetIntegerv_(0x8CA6, &srcFbo); // GL_FRAMEBUFFER_BINDING = 0x8CA6
+                // Bind default framebuffer (EGL surface back buffer)
+                glBindFramebuffer_(0x8D40, 0); // GL_FRAMEBUFFER = 0x8D40
+                // Set viewport to full window (use 1920x1080 Xbox resolution)
+                glViewport_(0, 0, 1920, 1080);
+                // Blit from core's FBO to default framebuffer
+                if (srcFbo != 0)
+                {
+                    glBlitFramebuffer_(0, 0, 1920, 1080, 0, 0, 1920, 1080,
+                        0x00004000, 0x00000300); // GL_COLOR_BUFFER_BIT, GL_NEAREST
+                }
+            }
+            eglSwap(eglDpy, eglSrf);
         });
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
@@ -282,8 +313,8 @@ bool ScummVMMain::Render()
         if (!m_d3d11ReleasedForGL && (m_useGL || m_d3d11ReleaseRequested.load()))
         {
             m_d3d11ReleasedForGL = true;
-            m_deviceResources->ReleasePresentationResources();
-            spdlog::info("[scummvm-uwp] D3D11 released on UI thread for GL mode");
+            m_deviceResources->DestroyDevice();
+            spdlog::info("[scummvm-uwp] D3D11 device fully destroyed on UI thread for GL mode");
         }
         return false;
     }

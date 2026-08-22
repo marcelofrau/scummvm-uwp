@@ -55,6 +55,7 @@ namespace DX
 	public:
 		// Presentation control — public so GL mode can release D3D11 swap chain.
 		void ReleasePresentationResources();
+		void DestroyDevice();
 
 	private:
 		void CreateDeviceIndependentResources();

@@ -240,6 +240,26 @@ void DX::DeviceResources::ReleasePresentationResources()
 	BootTrace(L"DeviceResources: D3D11 swap chain released (GL mode)");
 }
 
+void DX::DeviceResources::DestroyDevice()
+{
+	// Fully release D3D11 to eliminate D3D11/D3D12 device conflict on Xbox.
+	// D3D11 on Xbox uses 11on12 which creates an implicit D3D12 device.
+	// If both D3D11 and Mesa's D3D12 coexist, GPU resource conflicts → device lost.
+	if (!m_d3dDevice) return;
+
+	ReleasePresentationResources();
+
+	m_d3dContext = nullptr;
+	m_d3dDevice = nullptr;
+	m_d2dContext = nullptr;
+	m_d2dDevice = nullptr;
+	m_d2dFactory = nullptr;
+	m_dwriteFactory = nullptr;
+	m_wicFactory = nullptr;
+
+	BootTrace(L"DeviceResources: D3D11 device fully destroyed (GL mode)");
+}
+
 void DX::DeviceResources::CreateWindowSizeDependentResources() 
 {
 	// Clear the previous window size specific context.
