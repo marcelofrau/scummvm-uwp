@@ -12,6 +12,7 @@
 #include "Content\XAudio2Output.h"
 
 // SDL2 for GL context management — Xbox UWP path via opengl32.dll (Mesa WGL)
+#define SDL_MAIN_HANDLED
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_video.h"
 
