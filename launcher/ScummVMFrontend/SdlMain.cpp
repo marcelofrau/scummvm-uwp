@@ -124,6 +124,7 @@ static struct {
     SDL_Window* window = nullptr;
     SDL_GLContext glContext = nullptr;
     std::atomic<bool> hwRenderAccepted{ false };
+    retro_hw_context_reset_t contextReset = nullptr;
 
     std::atomic<bool> joypadState[16]{};
     std::atomic<int16_t> analogState[4]{};
@@ -304,6 +305,9 @@ static bool retro_env(unsigned cmd, void* data)
             hw->context_type = RETRO_HW_CONTEXT_OPENGL;
             hw->get_current_framebuffer = sdl_get_framebuffer;
             hw->get_proc_address = sdl_get_proc_address;
+            g_core.contextReset = hw->context_reset;
+            spdlog::info("[sdl] SET_HW_RENDER: context_reset={} get_proc={} get_fb={}",
+                (void*)hw->context_reset, (void*)sdl_get_proc_address, (void*)sdl_get_framebuffer);
             if (g_core.window && g_core.glContext)
                 SDL_GL_MakeCurrent(g_core.window, g_core.glContext);
             g_core.hwRenderAccepted = true;
@@ -527,6 +531,16 @@ extern "C" int sdl_main(int argc, char* argv[])
     g_core.set_audio_batch(retro_audio_batch_cb);
     g_core.set_input_poll(retro_input_poll_cb);
     g_core.set_input_state(retro_input_state_cb);
+
+    // Per libretro API: context_reset must be called after GL context creation
+    // and before retro_init — it initializes the core's GL resources (shaders,
+    // textures, FBOs). Without it, GL context is "not valid" per the spec.
+    if (g_core.hwRenderAccepted && g_core.contextReset) {
+        spdlog::info("[sdl] calling context_reset() — core GL resource init");
+        g_core.contextReset();
+        spdlog::info("[sdl] context_reset() done");
+    }
+
     g_core.init();
     spdlog::info("[sdl] retro_init OK");
 
