@@ -1,11 +1,15 @@
 #include "pch.h"
 #include "App.h"
+#include "SDL2/SDL.h"
 
 #include <appmodel.h>
 #pragma comment(lib, "onecoreuap.lib")
 
 using namespace Windows::ApplicationModel::Core;
 using namespace scummvm_uwp;
+
+// Forward declaration — defined in SdlMain.cpp (compiled without /ZW)
+extern "C" int sdl_main(int argc, char* argv[]);
 
 static std::wstring LocalStateDir()
 {
@@ -91,9 +95,12 @@ int main(Platform::Array<Platform::String^>^ args)
 
     SetUnhandledExceptionFilter(CrashFilter);
     BootTrace(L"main enter — " FRONTEND_VERSION);
-    auto source = ref new Direct3DApplicationSource();
-    BootTrace(L"CoreApplication::Run start");
-    CoreApplication::Run(source);
-    BootTrace(L"main exit after Run");
-    return 0;
+
+    // GL mode: delegate entire lifecycle to SDL_WinRTRunApp.
+    // SDL creates its own CoreWindow + IFrameworkView, calls sdl_main (in SdlMain.cpp).
+    // Our Direct3DApplicationSource/App are never used — SDL owns the event loop.
+    BootTrace(L"SDL_WinRTRunApp start");
+    int result = SDL_WinRTRunApp(sdl_main, nullptr);
+    BootTrace(L"main exit after SDL_WinRTRunApp");
+    return result;
 }
