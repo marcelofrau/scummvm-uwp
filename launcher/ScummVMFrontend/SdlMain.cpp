@@ -157,8 +157,8 @@ static bool LoadCoreDll()
     LOAD_SYM(init, init);
     LOAD_SYM(deinit, deinit);
     LOAD_SYM(run, run);
-    LOAD_SYM(retro_load_game, load);
-    LOAD_SYM(retro_unload_game, unload);
+    LOAD_SYM(load_game, load);
+    LOAD_SYM(unload_game, unload);
     LOAD_SYM(set_environment, set_environment);
     LOAD_SYM(set_video_refresh, set_video_refresh);
     LOAD_SYM(set_audio_sample_batch, set_audio_batch);
@@ -428,9 +428,7 @@ extern "C" int sdl_main(int argc, char* argv[])
     // Load core DLL
     if (!LoadCoreDll()) {
         spdlog::error("[sdl] core load FAILED");
-        SDL_GL_DeleteContext(g_core.glContext);
-        SDL_DestroyWindow(g_core.window);
-        SDL_Quit();
+        SDL_Quit(); // handles GL context + window teardown internally
         return 1;
     }
 
