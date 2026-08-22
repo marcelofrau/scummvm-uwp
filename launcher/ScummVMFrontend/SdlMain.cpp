@@ -326,6 +326,9 @@ static bool retro_env(unsigned cmd, void* data)
         spdlog::warn("[sdl] SET_HW_RENDER REJECTED (ctx={})", (int)hw->context_type);
         return false;
     }
+    case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
+        if (data) *(int*)data = 3; // audio + video both enabled
+        return true;
     default:
         return false;
     }
