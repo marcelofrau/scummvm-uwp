@@ -131,11 +131,11 @@ bool RetroCore::InitCore()
 
     // Make GL context current on THIS thread (emu thread) if available.
     // Core calls get_proc_address during retro_init — needs current context.
-    if (s_glContextReady.load() && s_glMakeCurrentFunc && s_glDC && s_glContext)
+    if (s_glContextReady.load() && s_glMakeCurrentFunc)
     {
-        bool ok = s_glMakeCurrentFunc(s_glDC, s_glContext);
-        OutputDebugStringA(ok ? "[scummvm-uwp] wglMakeCurrent on emu thread: OK\n"
-                              : "[scummvm-uwp] wglMakeCurrent on emu thread: FAILED\n");
+        bool ok = s_glMakeCurrentFunc(nullptr, nullptr);
+        OutputDebugStringA(ok ? "[scummvm-uwp] EGL makeCurrent on emu thread: OK\n"
+                              : "[scummvm-uwp] EGL makeCurrent on emu thread: FAILED\n");
     }
 
     OutputDebugStringA("[scummvm-uwp] retro_set_environment\n");
