@@ -120,6 +120,11 @@ bool ScummVMMain::BootCore()
         RetroCore::SetGLMakeCurrentFunc([this](void*, void*) -> bool {
             return m_eglMakeCurrent(m_eglDisplay, m_eglSurface, m_eglSurface, m_eglContext) != 0;
         });
+        // swap buffers: EGL swap on emu thread
+        RetroCore::SetGLSwapBuffersFunc([this]() {
+            if (m_eglSwapBuffers && m_eglDisplay && m_eglSurface)
+                m_eglSwapBuffers(m_eglDisplay, m_eglSurface);
+        });
         RetroCore::s_glContextReady.store(true);
         m_useGL = true;
         // Release context from boot thread so emu thread can acquire it.

@@ -85,6 +85,7 @@ namespace scummvm_uwp
         static std::function<bool(void*, void*)> s_glMakeCurrentFunc;
         static void* s_glDC;      // HDC for make-current
         static void* s_glContext; // HGLRC for make-current
+        static void SetGLSwapBuffersFunc(std::function<void()> func) { s_glSwapBuffersFunc = func; }
         static std::function<void()> s_glSwapBuffersFunc;
 
 #ifdef MOUSE_SUPPORT
