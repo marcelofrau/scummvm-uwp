@@ -173,6 +173,15 @@ void ScummVMMain::Update()
     {
         m_bootStarted = true;
 
+        // Initialize SDL2 + create window on UI thread FIRST (WinRT COM threading)
+        // Then launch async boot which will create GL context on boot thread
+        if (!InitSDLForGL())
+        {
+            spdlog::error("[scummvm-uwp] InitSDLForGL FAILED — boot aborted");
+            m_bootFailed = true;
+            return;
+        }
+
         m_bootFuture = std::async(std::launch::async, [this]() -> bool
         {
             CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -466,9 +475,10 @@ void ScummVMMain::CreatePresentationResources()
     BootTrace(L"boot: SDL2 GL context OK");
 }
 
-bool ScummVMMain::CreateGLContext()
+// InitSDLForGL — runs on UI thread. SDL_Init + SDL_CreateWindowFrom(CoreWindow).
+// Must run on UI thread because CoreWindow is WinRT COM (WrongThreadException).
+bool ScummVMMain::InitSDLForGL()
 {
-    // Initialize SDL2 for video (GL context management)
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
     {
@@ -476,10 +486,10 @@ bool ScummVMMain::CreateGLContext()
         return false;
     }
     m_sdlInitialized = true;
-    spdlog::info("[scummvm-uwp] SDL_Init(SDL_INIT_VIDEO) = OK");
-    BootTrace(L"boot: SDL_Init OK");
+    spdlog::info("[scummvm-uwp] SDL2 initialized OK");
+    BootTrace(L"boot: SDL2 initialized OK");
 
-    // Request D3D11 release BEFORE creating SDL window — Mesa D3D12 needs exclusive CoreWindow
+    // Request D3D11 release BEFORE creating SDL window
     spdlog::info("[scummvm-uwp] requesting D3D11 release before SDL window...");
     m_d3d11ReleaseRequested.store(true);
     auto waitStart = std::chrono::steady_clock::now();
@@ -493,15 +503,12 @@ bool ScummVMMain::CreateGLContext()
             return false;
         }
     }
-    spdlog::info("[scummvm-uwp] D3D11 released — creating SDL window");
+    spdlog::info("[scummvm-uwp] D3D11 released — creating SDL window on UI thread");
 
     // Get CoreWindow native ABI pointer for SDL_CreateWindowFrom
     Windows::UI::Core::CoreWindow^ coreWindow = m_deviceResources->GetCoreWindow();
     void* nativeWindow = reinterpret_cast<void*>(coreWindow);
 
-    // Create SDL window wrapping our existing CoreWindow
-    // SDL_WINDOW_FULLSCREEN_DESKTOP: auto-stretch to fill screen (fixes 1/6 size)
-    // SDL_WINDOW_OPENGL: request GL context
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
@@ -514,21 +521,28 @@ bool ScummVMMain::CreateGLContext()
     if (!m_sdlWindow)
     {
         spdlog::error("[scummvm-uwp] SDL_CreateWindowFrom FAILED: {}", SDL_GetError());
-        spdlog::info("[scummvm-uwp] Trying SDL_CreateWindow with FULLSCREEN_DESKTOP...");
-        // Fallback: let SDL create its own fullscreen window
-        m_sdlWindow = SDL_CreateWindow("ScummVM",
-            SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
-            0, 0,
-            SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_HIDDEN);
-    }
-    if (!m_sdlWindow)
-    {
-        spdlog::error("[scummvm-uwp] SDL_CreateWindow FAILED: {}", SDL_GetError());
         return false;
     }
-    spdlog::info("[scummvm-uwp] SDL window created (CreateWindowFrom={})", nativeWindow != nullptr ? "CoreWindow" : "fallback");
+    spdlog::info("[scummvm-uwp] SDL_CreateWindowFrom(CoreWindow) OK");
+    BootTrace(L"boot: SDL_CreateWindowFrom OK");
 
-    // Create GL context
+    m_sdlWindowReady = true;
+    return true;
+}
+
+bool ScummVMMain::CreateGLContext()
+{
+    // SDL2 init + window creation already done on UI thread by InitSDLForGL()
+    if (!m_sdlWindowReady || !m_sdlWindow)
+    {
+        spdlog::error("[scummvm-uwp] CreateGLContext: SDL window not ready");
+        return false;
+    }
+
+    spdlog::info("[scummvm-uwp] boot: creating GL context on boot thread (window from UI thread)");
+    BootTrace(L"boot: creating GL context");
+
+    // Create GL context — this runs on the boot thread (WGL/SDL context is thread-local)
     m_sdlGLContext = SDL_GL_CreateContext(m_sdlWindow);
     if (!m_sdlGLContext)
     {

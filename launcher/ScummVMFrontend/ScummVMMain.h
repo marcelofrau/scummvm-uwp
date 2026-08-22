@@ -46,6 +46,7 @@ namespace scummvm_uwp
         bool CreateGLContext();
         void DestroyGLContext();
         void PresentGLFrame();
+        bool InitSDLForGL();
 
     private:
         bool BootCore();
@@ -72,5 +73,6 @@ namespace scummvm_uwp
         SDL_Window* m_sdlWindow = nullptr;
         SDL_GLContext m_sdlGLContext = nullptr;
         bool m_sdlInitialized = false;
+        bool m_sdlWindowReady = false;
     };
 }
