@@ -184,11 +184,18 @@ static bool LoadCoreDll()
 // ─── Retro GL callbacks (free functions for C function pointer compat) ───
 static retro_proc_address_t sdl_get_proc_address(const char* name)
 {
-    return (retro_proc_address_t)SDL_GL_GetProcAddress(name);
+    auto p = (retro_proc_address_t)SDL_GL_GetProcAddress(name);
+    static int s_procCount = 0;
+    if (++s_procCount <= 10 || s_procCount % 50 == 0)
+        spdlog::info("[sdl] get_proc_address #{}: {} = {}", s_procCount, name, (void*)p);
+    return p;
 }
 
 static uintptr_t sdl_get_framebuffer(void)
 {
+    static int s_fbCount = 0;
+    if (++s_fbCount <= 5)
+        spdlog::info("[sdl] get_framebuffer #{}", s_fbCount);
     return 0;
 }
 
