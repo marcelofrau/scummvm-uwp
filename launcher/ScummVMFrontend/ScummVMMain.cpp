@@ -460,7 +460,7 @@ bool ScummVMMain::CreateGLContext()
 
     // Resolve all EGL function pointers from libEGL.dll
     m_eglGetProcAddress = (PFN_EGL_GET_PROC_ADDRESS)GetProcAddress(m_eglLib, "eglGetProcAddress");
-    m_eglGetDisplay = (PFN_EGL_GET_DISPLAY)GetProcAddress(m_eglLib, "eglGetPlatformDisplayEXT");
+    m_eglGetDisplay = (PFN_EGL_GET_DISPLAY)GetProcAddress(m_eglLib, "eglGetDisplay");
     m_eglInitialize = (PFN_EGL_INITIALIZE)GetProcAddress(m_eglLib, "eglInitialize");
     m_eglChooseConfig = (PFN_EGL_CHOOSE_CONFIG)GetProcAddress(m_eglLib, "eglChooseConfig");
     m_eglBindAPI = (PFN_EGL_BIND_API)GetProcAddress(m_eglLib, "eglBindAPI");
@@ -488,28 +488,8 @@ bool ScummVMMain::CreateGLContext()
     spdlog::info("[scummvm-uwp] EGL functions resolved from libEGL.dll");
     BootTrace(L"boot: EGL functions loaded");
 
-    // Get EGL display - try eglGetPlatformDisplayEXT first (Mesa), then eglGetDisplay
-    // EGL_PLATFORM_ANGLE_EXT = 0x34D0 (ANGLE) or EGL_PLATFORM_DEVICE_EXT = 0x313F
-    // On Mesa, EGL_DEFAULT_DISPLAY works via eglGetDisplay
-    // RetroArch uses eglGetDisplay(EGL_DEFAULT_DISPLAY) for the Mesa path
-
-    // Try eglGetPlatformDisplayEXT with EGL_PLATFORM_DEVICE_EXT
-    using PFN_EGL_GET_PLATFORM_DISPLAY_EXT = EGLDisplay (*)(EGLenum, void*, const EGLint*);
-    auto eglGetPlatformDisplayEXT = (PFN_EGL_GET_PLATFORM_DISPLAY_EXT)m_eglGetDisplay;
-
-    const EGLint display_attribs[] = { EGL_NONE };
-    m_eglDisplay = eglGetPlatformDisplayEXT(0x313F /* EGL_PLATFORM_DEVICE_EXT */, nullptr, display_attribs);
-
-    if (m_eglDisplay == EGL_NO_DISPLAY || !m_eglDisplay)
-    {
-        // Fallback: use standard eglGetDisplay
-        using PFN_EGL_GET_DISPLAY_STD = EGLDisplay (*)(void*);
-        auto eglGetDisplayStd = (PFN_EGL_GET_DISPLAY_STD)GetProcAddress(m_eglLib, "eglGetDisplay");
-        if (eglGetDisplayStd)
-        {
-            m_eglDisplay = eglGetDisplayStd(EGL_DEFAULT_DISPLAY);
-        }
-    }
+    // Get EGL display via eglGetDisplay(EGL_DEFAULT_DISPLAY) — matches RetroArch Mesa path
+    m_eglDisplay = m_eglGetDisplay(EGL_DEFAULT_DISPLAY);
 
     if (!m_eglDisplay || m_eglDisplay == EGL_NO_DISPLAY)
     {
