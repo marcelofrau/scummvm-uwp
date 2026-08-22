@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "App.h"
+#include "Bootstrap.h"
 #include "SDL2/SDL.h"
 
 #include <appmodel.h>
@@ -10,6 +11,13 @@ using namespace scummvm_uwp;
 
 // Forward declaration — defined in SdlMain.cpp (compiled without /ZW)
 extern "C" int sdl_main(int argc, char* argv[]);
+
+// Bridge: SdlMain.cpp (no /ZW) calls Bootstrap via this C-linkage wrapper
+// (main.cpp is compiled with /ZW, so Bootstrap name mangling matches).
+extern "C" bool Bootstrap_Run()
+{
+    return Bootstrap::Run();
+}
 
 static std::wstring LocalStateDir()
 {

@@ -378,9 +378,16 @@ static void AudioPullThread()
 }
 
 // ─── SDL main (called by SDL_WinRTRunApp after CoreWindow creation) ─────
+// Bridge: defined in main.cpp (compiled with /ZW) calling Bootstrap::Run()
+extern "C" bool Bootstrap_Run();
+
 extern "C" int sdl_main(int argc, char* argv[])
 {
     spdlog::info("[sdl] sdl_main entered — " FRONTEND_VERSION);
+
+    // Run Bootstrap (stages scummvm.zip, writes scummvm.ini, sets DataPaths).
+    bool bootstrapped = Bootstrap_Run();
+    spdlog::info("[sdl] Bootstrap::Run() = {}", bootstrapped);
 
     // Resolve LocalState from the log path already set by main.cpp
     // (main.cpp uses ApplicationData::Current->LocalFolder which is correct on Xbox).
