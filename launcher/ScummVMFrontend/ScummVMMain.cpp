@@ -269,6 +269,14 @@ bool ScummVMMain::Render()
 
     if (m_useGL || !m_deviceResources->GetSwapChain())
     {
+        // First time entering GL path: release D3D11 resources on UI thread
+        // (boot thread created EGL context; now safe to tear down D3D11 here)
+        if (m_useGL && !m_d3d11ReleasedForGL)
+        {
+            m_d3d11ReleasedForGL = true;
+            m_deviceResources->ReleasePresentationResources();
+            spdlog::info("[scummvm-uwp] D3D11 released on UI thread for GL mode");
+        }
         return false;
     }
 
@@ -613,11 +621,6 @@ bool ScummVMMain::CreateGLContext()
         return false;
     }
     spdlog::info("[scummvm-uwp] eglMakeCurrent OK");
-
-    // Release D3D11 swap chain - EGL now owns the CoreWindow presentation
-    m_deviceResources->ReleasePresentationResources();
-    spdlog::info("[scummvm-uwp] D3D11 swap chain released for EGL/GL mode");
-    BootTrace(L"boot: D3D11 swap chain released for EGL");
 
     m_glInitialized = true;
     spdlog::info("[scummvm-uwp] Mesa EGL context active");
