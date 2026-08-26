@@ -137,6 +137,11 @@ static struct {
     int coreWidth = 0;
     int coreHeight = 0;
 
+    // Cached GL function pointers for blit (resolved once at init)
+    void (*glBindFramebuffer)(unsigned int, unsigned int) = nullptr;
+    void (*glBlitFramebuffer)(int, int, int, int, int, int, int, int, unsigned int, unsigned int) = nullptr;
+    void (*glViewport)(int, int, int, int) = nullptr;
+
     std::atomic<bool> joypadState[16]{};
     std::atomic<int16_t> analogState[4]{};
 } g_core;
@@ -399,15 +404,7 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
     if (data == RETRO_HW_FRAME_BUFFER_VALID && g_core.hwRenderAccepted.load()) {
         // Core rendered into FBO — blit to default framebuffer (screen) at window size
         if (g_core.fbo && g_core.window) {
-            typedef void (*FN_glBindFramebuffer)(unsigned int, unsigned int);
-            typedef void (*FN_glBlitFramebuffer)(int, int, int, int, int, int, int, int, unsigned int, unsigned int);
-            typedef void (*FN_glViewport)(int, int, int, int);
-
-            auto _glBindFramebuffer = (FN_glBindFramebuffer)SDL_GL_GetProcAddress("glBindFramebuffer");
-            auto _glBlitFramebuffer = (FN_glBlitFramebuffer)SDL_GL_GetProcAddress("glBlitFramebuffer");
-            auto _glViewport = (FN_glViewport)SDL_GL_GetProcAddress("glViewport");
-
-            if (_glBindFramebuffer && _glBlitFramebuffer && _glViewport) {
+            if (g_core.glBindFramebuffer && g_core.glBlitFramebuffer && g_core.glViewport) {
                 int winW = 0, winH = 0;
                 SDL_GL_GetDrawableSize(g_core.window, &winW, &winH);
 
@@ -416,13 +413,11 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
                         g_core.fbo, winW, winH, w, h);
                 }
 
-                // Use GL_READ_FRAMEBUFFER=0x8CA8 and GL_DRAW_FRAMEBUFFER=0x8CA9
-                // so the blit reads from our FBO and writes to the screen
-                _glViewport(0, 0, winW, winH);
-                _glBindFramebuffer(0x8CA8, g_core.fbo);  // GL_READ_FRAMEBUFFER
-                _glBindFramebuffer(0x8CA9, 0);            // GL_DRAW_FRAMEBUFFER = screen
-                _glBlitFramebuffer(0, 0, (int)w, (int)h, 0, 0, winW, winH, 0x00004000, 0x2600); // GL_COLOR_BUFFER_BIT, GL_LINEAR
-                _glBindFramebuffer(0x8CA9, 0);            // reset draw
+                g_core.glViewport(0, 0, winW, winH);
+                g_core.glBindFramebuffer(0x8CA8, g_core.fbo);  // GL_READ_FRAMEBUFFER
+                g_core.glBindFramebuffer(0x8CA9, 0);            // GL_DRAW_FRAMEBUFFER = screen
+                g_core.glBlitFramebuffer(0, 0, (int)w, (int)h, 0, 0, winW, winH, 0x00004000, 0x2600);
+                g_core.glBindFramebuffer(0x8CA9, 0);
             }
         }
         SDL_GL_SwapWindow(g_core.window);
@@ -444,18 +439,27 @@ static size_t retro_audio_batch_cb(const int16_t* data, size_t frames)
 // ─── Input ──────────────────────────────────────────────────────────────
 static void retro_input_poll_cb() {}
 
+static const int16_t JOY_DEADZONE = 8000;
+
+static int16_t apply_deadzone(int16_t raw) {
+    if (raw > -JOY_DEADZONE && raw < JOY_DEADZONE) return 0;
+    // Rescale so output fills full range after deadzone
+    if (raw > 0) return (int16_t)(((int32_t)(raw - JOY_DEADZONE) * 32767) / (32767 - JOY_DEADZONE));
+    return (int16_t)(((int32_t)(raw + JOY_DEADZONE) * -32768) / (-32768 + JOY_DEADZONE));
+}
+
 static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
+    if (port != 0) return 0;
+
     if (device == RETRO_DEVICE_ANALOG) {
-        // Analog sticks: index 0 = left, index 1 = right
-        if (id == RETRO_DEVICE_ID_ANALOG_X && index == 0) return g_core.analogState[0].load();
-        if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 0) return g_core.analogState[1].load();
-        if (id == RETRO_DEVICE_ID_ANALOG_X && index == 1) return g_core.analogState[2].load();
-        if (id == RETRO_DEVICE_ID_ANALOG_Y && index == 1) return g_core.analogState[3].load();
+        // Analog values already have deadzone applied in PollGamepad
+        if (index < 2 && id < 2) return g_core.analogState[index * 2 + id].load();
         return 0;
     }
-    if (device != RETRO_DEVICE_JOYPAD) return 0;
-    if (id < 16) return g_core.joypadState[id].load() ? 1 : 0;
+    if (device == RETRO_DEVICE_JOYPAD) {
+        if (id < 16) return g_core.joypadState[id].load() ? 1 : 0;
+    }
     return 0;
 }
 
@@ -599,9 +603,19 @@ extern "C" int sdl_main(int argc, char* argv[])
         typedef const unsigned char* (__stdcall* FN_glGetString)(unsigned);
         auto _glGetString = (FN_glGetString)SDL_GL_GetProcAddress("glGetString");
         spdlog::info("[sdl] GL context active — vendor={} renderer={}",
-            _glGetString ? (const char*)_glGetString(0x1F00) : "?",   // GL_VENDOR=0x1F00
-            _glGetString ? (const char*)_glGetString(0x1F01) : "?");  // GL_RENDERER=0x1F01
+            _glGetString ? (const char*)_glGetString(0x1F00) : "?",
+            _glGetString ? (const char*)_glGetString(0x1F01) : "?");
     }
+
+    // Enable vsync to pace the render loop
+    SDL_GL_SetSwapInterval(1);
+
+    // Cache GL function pointers for blit (resolved once, not per-frame)
+    g_core.glBindFramebuffer = (decltype(g_core.glBindFramebuffer))SDL_GL_GetProcAddress("glBindFramebuffer");
+    g_core.glBlitFramebuffer = (decltype(g_core.glBlitFramebuffer))SDL_GL_GetProcAddress("glBlitFramebuffer");
+    g_core.glViewport = (decltype(g_core.glViewport))SDL_GL_GetProcAddress("glViewport");
+    spdlog::info("[sdl] GL procs cached: bindFB={} blitFB={} viewport={}",
+        (void*)g_core.glBindFramebuffer, (void*)g_core.glBlitFramebuffer, (void*)g_core.glViewport);
 
     // Create FBO for HW render — core renders into this, we blit to screen at window size
     {
@@ -703,12 +717,63 @@ extern "C" int sdl_main(int argc, char* argv[])
 
     spdlog::info("[sdl] entering main loop");
 
+    // ─── Poll-based input (dosbox-uwp pattern) ──────────────────────
+    // Snapshot joypad+analog state BEFORE each retro_run() call.
+    // Clear all buttons, poll current physical state, feed to core.
+    // This avoids stale state from missed SDL events.
+    struct PadMap { SDL_GameControllerButton sdlBtn; unsigned retroId; };
+    static const PadMap padMap[] = {
+        { SDL_CONTROLLER_BUTTON_A,             RETRO_DEVICE_ID_JOYPAD_A },
+        { SDL_CONTROLLER_BUTTON_B,             RETRO_DEVICE_ID_JOYPAD_B },
+        { SDL_CONTROLLER_BUTTON_X,             RETRO_DEVICE_ID_JOYPAD_X },
+        { SDL_CONTROLLER_BUTTON_Y,             RETRO_DEVICE_ID_JOYPAD_Y },
+        { SDL_CONTROLLER_BUTTON_LEFTSHOULDER,  RETRO_DEVICE_ID_JOYPAD_L },
+        { SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, RETRO_DEVICE_ID_JOYPAD_R },
+        { SDL_CONTROLLER_BUTTON_BACK,          RETRO_DEVICE_ID_JOYPAD_SELECT },
+        { SDL_CONTROLLER_BUTTON_START,         RETRO_DEVICE_ID_JOYPAD_START },
+        { SDL_CONTROLLER_BUTTON_LEFTSTICK,     RETRO_DEVICE_ID_JOYPAD_L3 },
+        { SDL_CONTROLLER_BUTTON_RIGHTSTICK,    RETRO_DEVICE_ID_JOYPAD_R3 },
+        { SDL_CONTROLLER_BUTTON_DPAD_UP,       RETRO_DEVICE_ID_JOYPAD_UP },
+        { SDL_CONTROLLER_BUTTON_DPAD_DOWN,     RETRO_DEVICE_ID_JOYPAD_DOWN },
+        { SDL_CONTROLLER_BUTTON_DPAD_LEFT,     RETRO_DEVICE_ID_JOYPAD_LEFT },
+        { SDL_CONTROLLER_BUTTON_DPAD_RIGHT,    RETRO_DEVICE_ID_JOYPAD_RIGHT },
+    };
+
+    auto PollGamepad = [&]() {
+        if (!pad) return;
+
+        // Zero all joypad buttons
+        for (int i = 0; i < 16; i++)
+            g_core.joypadState[i].store(false);
+
+        // Poll digital buttons
+        for (auto& m : padMap)
+            g_core.joypadState[m.retroId].store(SDL_GameControllerGetButton(pad, m.sdlBtn) != 0);
+
+        // Poll triggers → L2/R2
+        int16_t lt = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+        int16_t rt = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L2].store(lt > 8192);
+        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R2].store(rt > 8192);
+
+        // Poll analog sticks with deadzone
+        int16_t rawLX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
+        int16_t rawLY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+        int16_t rawRX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
+        int16_t rawRY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
+        g_core.analogState[0].store(apply_deadzone(rawLX));
+        g_core.analogState[1].store(apply_deadzone(rawLY));
+        g_core.analogState[2].store(apply_deadzone(rawRX));
+        g_core.analogState[3].store(apply_deadzone(rawRY));
+    };
+
     // Main loop
     bool quit = false;
     int runCount = 0;
-    int evCount = 0, btnCount = 0, axCount = 0, joyBtnCount = 0, joyAxCount = 0;
+    int evCount = 0;
     while (!quit)
     {
+        // Drain SDL events — only for quit/device/disconnect
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
         {
@@ -717,101 +782,6 @@ extern "C" int sdl_main(int argc, char* argv[])
             {
             case SDL_QUIT:
                 quit = true;
-                break;
-            case SDL_KEYDOWN:
-            case SDL_KEYUP:
-            {
-                bool down = (ev.type == SDL_KEYDOWN);
-                switch (ev.key.keysym.sym) {
-                case SDLK_UP:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
-                case SDLK_DOWN:   g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
-                case SDLK_LEFT:   g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
-                case SDLK_RIGHT:  g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
-                case SDLK_z:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
-                case SDLK_x:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
-                case SDLK_a:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
-                case SDLK_s:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
-                case SDLK_q:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
-                case SDLK_w:      g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
-                case SDLK_RETURN: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
-                case SDLK_TAB:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
-                default: break;
-                }
-                break;
-            }
-            case SDL_CONTROLLERAXISMOTION:
-                axCount++;
-                {
-                    int16_t val = ev.caxis.value;
-                    switch (ev.caxis.axis) {
-                    case SDL_CONTROLLER_AXIS_LEFTX:  g_core.analogState[0].store(val); break;
-                    case SDL_CONTROLLER_AXIS_LEFTY:  g_core.analogState[1].store(val); break;
-                    case SDL_CONTROLLER_AXIS_RIGHTX: g_core.analogState[2].store(val); break;
-                    case SDL_CONTROLLER_AXIS_RIGHTY: g_core.analogState[3].store(val); break;
-                    }
-                }
-                break;
-            case SDL_CONTROLLERBUTTONDOWN:
-            case SDL_CONTROLLERBUTTONUP:
-                btnCount++;
-                {
-                    bool down = (ev.type == SDL_CONTROLLERBUTTONDOWN);
-                    switch (ev.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_A:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_B:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_X:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_Y:             g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:  g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_BACK:          g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_START:         g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSTICK:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L3].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSTICK:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R3].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP:       g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:     g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:    g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
-                    }
-                }
-                break;
-            case SDL_JOYAXISMOTION:
-                joyAxCount++;
-                {
-                    int16_t val = ev.jaxis.value;
-                    switch (ev.jaxis.axis) {
-                    case 0: g_core.analogState[0].store(val); break; // left X
-                    case 1: g_core.analogState[1].store(val); break; // left Y
-                    case 2: g_core.analogState[2].store(val); break; // right X
-                    case 3: g_core.analogState[3].store(val); break; // right Y
-                    case 4: // left trigger
-                        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L2].store(val > 8192 ? 1 : 0); break;
-                    case 5: // right trigger
-                        g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R2].store(val > 8192 ? 1 : 0); break;
-                    }
-                }
-                break;
-            case SDL_JOYBUTTONDOWN:
-            case SDL_JOYBUTTONUP:
-                joyBtnCount++;
-                {
-                    bool down = (ev.type == SDL_JOYBUTTONDOWN);
-                    switch (ev.jbutton.button) {
-                    case 0: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].store(down); break;
-                    case 1: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].store(down); break;
-                    case 2: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_X].store(down); break;
-                    case 3: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_Y].store(down); break;
-                    case 4: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].store(down); break;
-                    case 5: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].store(down); break;
-                    case 6: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_SELECT].store(down); break;
-                    case 7: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_START].store(down); break;
-                    case 8: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L3].store(down); break;
-                    case 9: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R3].store(down); break;
-                    case 10: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].store(down); break;
-                    case 11: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].store(down); break;
-                    case 12: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].store(down); break;
-                    case 13: g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].store(down); break;
-                    }
-                }
                 break;
             case SDL_JOYDEVICEADDED:
                 spdlog::info("[sdl] joystick #{} added (name={})", ev.jdevice.which, SDL_JoystickNameForIndex(ev.jdevice.which));
@@ -832,11 +802,22 @@ extern "C" int sdl_main(int argc, char* argv[])
 
         if (quit) break;
 
-        // Log input event stats every 300 frames
+        // Snapshot gamepad state BEFORE retro_run
+        PollGamepad();
+
+        // Log input stats every 300 frames
         if (++runCount <= 3 || runCount % 300 == 0) {
-            spdlog::info("[sdl] retro_run #{} | events total={} ctrl_btn={} ctrl_ax={} joy_btn={} joy_ax={}",
-                runCount, evCount, btnCount, axCount, joyBtnCount, joyAxCount);
-            evCount = 0; btnCount = 0; axCount = 0; joyBtnCount = 0; joyAxCount = 0;
+            spdlog::info("[sdl] retro_run #{} | ev={} dpad=[{}{}{}{}] btn=[ABXY:{}{}LR:{}{}]",
+                runCount, evCount,
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_UP].load() ? "U" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_DOWN].load() ? "D" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_LEFT].load() ? "L" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_RIGHT].load() ? "R" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_A].load() ? "A" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_B].load() ? "B" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].load() ? "L" : "-",
+                g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].load() ? "R" : "-");
+            evCount = 0;
         }
 
         if (g_core.loaded && g_core.running) {
