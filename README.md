@@ -212,6 +212,15 @@ Deploy is **manual** through the Xbox Device Portal (Dev Mode):
 The portal never uninstalls or upgrades an existing RetroArch install on the
 console.
 
+### Migration (v2026.3.1.62+)
+
+The package identity was renamed `ScummVMFrontend` → `ScummVMLauncher`, so
+the LocalState folder on the console changed from
+`ScummVMFrontend_<hash>\LocalState` to `ScummVMLauncher_<hash>\LocalState`.
+Saves already created by older builds are **not** migrated automatically:
+copy the `saves` folder from the old LocalState once, or keep both appx
+installed side by side until saves are copied over.
+
 ### CI/CD
 
 `.github/workflows/release.yml` — triggered by a `v*` tag or manually
