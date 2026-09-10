@@ -47,11 +47,12 @@ try {
     }
 
     # 4. Verify the signed package for this version exists (.msix modern, .appx legacy).
-    $appxDir = Join-Path $root "launcher\ScummVMLauncher\AppPackages\ScummVMLauncher_${version}_x64_Test"
-    $appx = Get-ChildItem $appxDir -Filter "*.msix" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $appx) { $appx = Get-ChildItem $appxDir -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    #    Layout varies between VS installs (nested AppPackages\<Name>\ or flat) — search recursively.
+    $appxRoot = Join-Path $root "launcher\ScummVMLauncher\AppPackages"
+    $appx = Get-ChildItem $appxRoot -Recurse -Include "ScummVMLauncher_${version}_x64.msix", "ScummVMLauncher_${version}_x64.appx" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $appx) {
-        Write-Error "Package not found for version $version : $appxDir"; exit 1
+        Write-Error "Package not found for version $version under $appxRoot"; exit 1
     }
     $appx = $appx.FullName
     Write-Host "Release build: $version" -ForegroundColor Cyan
