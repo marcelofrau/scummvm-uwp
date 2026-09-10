@@ -229,8 +229,8 @@ static bool retro_env(unsigned cmd, void* data)
     switch (cmd)
     {
     case RETRO_ENVIRONMENT_SET_ROTATION:
-        spdlog::info("[sdl] SET_ROTATION accepted");
-        return true;
+        spdlog::info("[sdl] SET_ROTATION rejected (false)");
+        return false;
     case RETRO_ENVIRONMENT_GET_OVERSCAN:
         return false;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
@@ -246,18 +246,18 @@ static bool retro_env(unsigned cmd, void* data)
         if (desc) {
             int count = 0;
             for (int i = 0; desc[i].description; i++) count++;
-            spdlog::info("[sdl] SET_INPUT_DESCRIPTORS: {} entries", count);
+            spdlog::info("[sdl] SET_INPUT_DESCRIPTORS: {} entries (rejected)", count);
             for (int i = 0; i < count && i < 20; i++) {
                 spdlog::info("[sdl]   desc[{}] device={} id={} index={} desc={}",
                     i, desc[i].device, desc[i].id, desc[i].index,
                     desc[i].description ? desc[i].description : "?");
             }
         }
-        return true;
+        return false;
     }
     case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
-        spdlog::info("[sdl] SET_KEYBOARD_CALLBACK accepted");
-        return true;
+        spdlog::info("[sdl] SET_KEYBOARD_CALLBACK rejected");
+        return false;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
     {
         auto geom = (retro_game_geometry*)data;
@@ -391,8 +391,8 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
-        spdlog::info("[sdl] GET_INPUT_BITMASKS queried — returning true");
-        return true;
+        spdlog::info("[sdl] GET_INPUT_BITMASKS queried — returning false (original)");
+        return false;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         if (data) *(const char**)data = g_systemDir.c_str();
         return true;
@@ -544,13 +544,6 @@ static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned ind
         return 0;
     }
     if (device == RETRO_DEVICE_JOYPAD) {
-        // RETRO_DEVICE_ID_JOYPAD_MASK = 32 — bitmask of all pressed buttons
-        if (id == 32) {
-            uint32_t mask = 0;
-            for (int i = 0; i < 16; i++)
-                if (g_core.joypadState[i].load()) mask |= (1u << i);
-            return (int16_t)mask;
-        }
         if (id < 16) {
             int16_t val = g_core.joypadState[id].load() ? 1 : 0;
             // Log first 50 joypad calls (to see what device+id the core reads)
