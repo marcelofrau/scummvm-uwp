@@ -517,15 +517,6 @@ static void retro_input_poll_cb() {
         spdlog::info("[sdl] retro_input_poll #{}", n);
 }
 
-static const int16_t JOY_DEADZONE = 8000;
-
-static int16_t apply_deadzone(int16_t raw) {
-    if (raw > -JOY_DEADZONE && raw < JOY_DEADZONE) return 0;
-    // Rescale so output fills full range after deadzone
-    if (raw > 0) return (int16_t)(((int32_t)(raw - JOY_DEADZONE) * 32767) / (32767 - JOY_DEADZONE));
-    return (int16_t)(((int32_t)(raw + JOY_DEADZONE) * -32768) / (-32768 + JOY_DEADZONE));
-}
-
 static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     if (port != 0) return 0;
@@ -855,15 +846,17 @@ extern "C" int sdl_main(int argc, char* argv[])
         g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L2].store(lt > 8192);
         g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R2].store(rt > 8192);
 
-        // Poll analog sticks with deadzone
+        // Poll analog sticks — RAW values (no frontend deadzone).
+        // The core applies its own deadzone via retro_setting_get_analog_deadzone().
+        // This matches the old event-driven behavior that worked.
         int16_t rawLX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
         int16_t rawLY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
         int16_t rawRX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
         int16_t rawRY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
-        g_core.analogState[0].store(apply_deadzone(rawLX));
-        g_core.analogState[1].store(apply_deadzone(rawLY));
-        g_core.analogState[2].store(apply_deadzone(rawRX));
-        g_core.analogState[3].store(apply_deadzone(rawRY));
+        g_core.analogState[0].store(rawLX);
+        g_core.analogState[1].store(rawLY);
+        g_core.analogState[2].store(rawRX);
+        g_core.analogState[3].store(rawRY);
 
         // Analog diagnostic: dense timeline while stick outside center.
         // Logs every 20 frames when either axis is non-zero (active),
@@ -877,7 +870,7 @@ extern "C" int sdl_main(int argc, char* argv[])
         bool active = (lx != 0 || ly != 0);
         if ((changed && active) || (active && (++analogLogCount % 20) == 0)) {
             analogLogCount = 0;
-            spdlog::info("[sdl] analog L rawLX={} rawLY={} dzLX={} dzLY={}", rawLX, rawLY, lx, ly);
+            spdlog::info("[sdl] analog L rawLX={} rawLY={} stLX={} stLY={}", rawLX, rawLY, lx, ly);
             lastLx = lx; lastLy = ly;
         }
     };
