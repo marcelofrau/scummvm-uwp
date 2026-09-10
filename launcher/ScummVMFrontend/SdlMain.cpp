@@ -141,6 +141,13 @@ static struct {
     void (*glBindFramebuffer)(unsigned int, unsigned int) = nullptr;
     void (*glBlitFramebuffer)(int, int, int, int, int, int, int, int, unsigned int, unsigned int) = nullptr;
     void (*glViewport)(int, int, int, int) = nullptr;
+    void (*glClear)(unsigned int) = nullptr;
+    void (*glClearColor)(float, float, float, float) = nullptr;
+
+    // Core-reported geometry (from SET_SYSTEM_AV_INFO / SET_GEOMETRY)
+    unsigned int geomBaseW = 0;
+    unsigned int geomBaseH = 0;
+    float geomAspect = 0.0f;
 
     std::atomic<bool> joypadState[16]{};
     std::atomic<int16_t> analogState[4]{};
@@ -237,7 +244,19 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
         return false;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
+    {
+        auto geom = (retro_game_geometry*)data;
+        if (geom) {
+            g_core.geomBaseW = geom->base_width;
+            g_core.geomBaseH = geom->base_height;
+            g_core.geomAspect = geom->aspect_ratio > 0.f
+                ? geom->aspect_ratio
+                : (float)geom->base_width / (float)geom->base_height;
+            spdlog::info("[sdl] SET_GEOMETRY: base={}x{} aspect={:.4f}",
+                geom->base_width, geom->base_height, g_core.geomAspect);
+        }
         return true;
+    }
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
     {
         auto cb = (retro_log_callback*)data;
@@ -258,7 +277,20 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK:
         return true;
     case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+    {
+        auto av = (retro_system_av_info*)data;
+        if (av) {
+            g_core.geomBaseW = av->geometry.base_width;
+            g_core.geomBaseH = av->geometry.base_height;
+            g_core.geomAspect = av->geometry.aspect_ratio > 0.f
+                ? av->geometry.aspect_ratio
+                : (float)av->geometry.base_width / (float)av->geometry.base_height;
+            spdlog::info("[sdl] SET_SYSTEM_AV_INFO: base={}x{} aspect={:.4f} fps={:.2f} rate={:.0f}",
+                av->geometry.base_width, av->geometry.base_height, g_core.geomAspect,
+                av->timing.fps, av->timing.sample_rate);
+        }
         return true;
+    }
     case RETRO_ENVIRONMENT_SET_PROC_ADDRESS_CALLBACK:
         return true;
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
@@ -408,15 +440,32 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
                 int winW = 0, winH = 0;
                 SDL_GL_GetDrawableSize(g_core.window, &winW, &winH);
 
+                // Reset cached GL state that the core may depend on next frame:
+                // clear to black, restore default framebuffer binding.
+                if (g_core.glClear) {
+                    g_core.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    g_core.glBindFramebuffer(0x8CA9, 0); // GL_DRAW_FRAMEBUFFER = screen
+                    g_core.glClear(0x00004000);
+                }
+
+                // Compute aspect-corrected destination rect (letterbox/pillarbox, centered).
+                float aspect = g_core.geomAspect > 0.f
+                    ? g_core.geomAspect
+                    : (w > 0 && h > 0) ? (float)w / (float)h : 16.f / 9.f;
+                int dstW = winW, dstH = (int)((float)winW / aspect);
+                if (dstH > winH) { dstH = winH; dstW = (int)((float)winH * aspect); }
+                int dstX = (winW - dstW) / 2;
+                int dstY = (winH - dstH) / 2;
+
                 if (s_frameCount <= 5) {
-                    spdlog::info("[sdl] blit FBO {} → screen {}x{} (src {}x{})",
-                        g_core.fbo, winW, winH, w, h);
+                    spdlog::info("[sdl] blit FBO {} → screen {}x{} (src {}x{}) dst {}x{} at {}x{} aspect={:.4f}",
+                        g_core.fbo, winW, winH, w, h, dstW, dstH, dstX, dstY, aspect);
                 }
 
                 g_core.glViewport(0, 0, winW, winH);
                 g_core.glBindFramebuffer(0x8CA8, g_core.fbo);  // GL_READ_FRAMEBUFFER
                 g_core.glBindFramebuffer(0x8CA9, 0);            // GL_DRAW_FRAMEBUFFER = screen
-                g_core.glBlitFramebuffer(0, 0, (int)w, (int)h, 0, 0, winW, winH, 0x00004000, 0x2600);
+                g_core.glBlitFramebuffer(0, 0, (int)w, (int)h, dstX, dstY, dstX + dstW, dstY + dstH, 0x00004000, 0x2601); // GL_LINEAR
                 g_core.glBindFramebuffer(0x8CA9, 0);
             }
         }
@@ -614,8 +663,10 @@ extern "C" int sdl_main(int argc, char* argv[])
     g_core.glBindFramebuffer = (decltype(g_core.glBindFramebuffer))SDL_GL_GetProcAddress("glBindFramebuffer");
     g_core.glBlitFramebuffer = (decltype(g_core.glBlitFramebuffer))SDL_GL_GetProcAddress("glBlitFramebuffer");
     g_core.glViewport = (decltype(g_core.glViewport))SDL_GL_GetProcAddress("glViewport");
-    spdlog::info("[sdl] GL procs cached: bindFB={} blitFB={} viewport={}",
-        (void*)g_core.glBindFramebuffer, (void*)g_core.glBlitFramebuffer, (void*)g_core.glViewport);
+    g_core.glClear = (decltype(g_core.glClear))SDL_GL_GetProcAddress("glClear");
+    g_core.glClearColor = (decltype(g_core.glClearColor))SDL_GL_GetProcAddress("glClearColor");
+    spdlog::info("[sdl] GL procs cached: bindFB={} blitFB={} viewport={} clear={}",
+        (void*)g_core.glBindFramebuffer, (void*)g_core.glBlitFramebuffer, (void*)g_core.glViewport, (void*)g_core.glClear);
 
     // Create FBO for HW render — core renders into this, we blit to screen at window size
     {
