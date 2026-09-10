@@ -420,6 +420,10 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE:
         if (data) *(int*)data = 3; // audio + video both enabled
         return true;
+    case RETRO_ENVIRONMENT_SHUTDOWN:
+        spdlog::info("[sdl] core requested SHUTDOWN");
+        g_core.shutdownRequested = true;
+        return true;
     default:
         return false;
     }
