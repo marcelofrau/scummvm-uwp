@@ -849,14 +849,20 @@ extern "C" int sdl_main(int argc, char* argv[])
         // Poll analog sticks — RAW values (no frontend deadzone).
         // The core applies its own deadzone via retro_setting_get_analog_deadzone().
         // This matches the old event-driven behavior that worked.
+        //
+        // Clamp to ±32767: the libretro spec range is [-32767, 32767]. Xbox
+        // pads deliver raw -32768 at full up/left travel, which overflows the
+        // core's int16 abs() in mapper_get_device_key_value() (abs(-32768)=32768
+        // wraps back to -32768, so `res > 1` is false → mapper returns 0 → cursor
+        // stops). RetroArch clamps the same way, which is why up/left work there.
         int16_t rawLX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
         int16_t rawLY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
         int16_t rawRX = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTX);
         int16_t rawRY = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY);
-        g_core.analogState[0].store(rawLX);
-        g_core.analogState[1].store(rawLY);
-        g_core.analogState[2].store(rawRX);
-        g_core.analogState[3].store(rawRY);
+        g_core.analogState[0].store(rawLX < -32767 ? -32767 : rawLX);
+        g_core.analogState[1].store(rawLY < -32767 ? -32767 : rawLY);
+        g_core.analogState[2].store(rawRX < -32767 ? -32767 : rawRX);
+        g_core.analogState[3].store(rawRY < -32767 ? -32767 : rawRY);
 
         // Analog diagnostic: dense timeline while stick outside center.
         // Logs every 20 frames when either axis is non-zero (active),
