@@ -2,17 +2,14 @@
 
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
-  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap mp rescap">
+  IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="148433a7-fd05-4815-9e57-fa81cb66d285"
+    Name="ScummVMLauncher"
     Publisher="CN=Marcelo Frau"
-    Version="2026.3.1.55" />
-
-  <mp:PhoneIdentity PhoneProductId="148433a7-fd05-4815-9e57-fa81cb66d285" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+    Version="2026.3.1.61" />
 
   <Properties>
     <DisplayName>ScummVM UWP Launcher</DisplayName>
@@ -21,8 +18,7 @@
   </Properties>
 
   <Dependencies>
-    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.15063.0" MaxVersionTested="10.0.26100.0" />
-    <PackageDependency Name="Microsoft.VCLibs.140.00" MinVersion="14.0.33519.0" Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"/>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
 
   <Resources>
@@ -33,44 +29,18 @@
   <Applications>
     <Application Id="App"
       Executable="ScummVMLauncher.exe"
-      EntryPoint="ScummVMLauncher.App">
-        <uap:VisualElements
-          DisplayName="ScummVM UWP Launcher"
-          Square150x150Logo="Assets\Square150x150Logo.png"
-          Square44x44Logo="Assets\Square44x44Logo.png"
-          Description="ScummVM adventure games on Xbox, via RetroArch."
-          BackgroundColor="transparent">
-          <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
-                           Square71x71Logo="Assets\Square71x71Logo.png"
-                           Square310x310Logo="Assets\Square310x310Logo.png" />
-          <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#CC6701" />
-          <uap:LockScreen Notification="badge" BadgeLogo="Assets\LockScreenLogo.png" />
-        </uap:VisualElements>
-        <Extensions>
-          <uap:Extension Category="windows.protocol">
-            <uap:Protocol Name="scummvm-launcher" />
-          </uap:Extension>
-        </Extensions>
-    </Application>
-    <Application Id="RetroArch"
-      Executable="RetroArch-msvcUWP.exe"
-      EntryPoint="RetroArch.App">
-        <uap:VisualElements
-          DisplayName="RetroArch ScummVM"
-          Square150x150Logo="Assets\Square150x150Logo.png"
-          Square44x44Logo="Assets\Square44x44Logo.png"
-          Description="RetroArch frontend with ScummVM."
-          BackgroundColor="transparent"
-          AppListEntry="none">
-          <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#CC6701" />
-        </uap:VisualElements>
-        <Extensions>
-          <uap:Extension Category="windows.protocol">
-            <uap:Protocol Name="scummvm-core">
-              <uap:DisplayName>scummvm-core</uap:DisplayName>
-            </uap:Protocol>
-          </uap:Extension>
-        </Extensions>
+      EntryPoint="scummvm_uwp.App">
+      <uap:VisualElements
+        DisplayName="ScummVM UWP Launcher"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="ScummVM adventure games on Xbox."
+        BackgroundColor="transparent">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
+                         Square71x71Logo="Assets\Square71x71Logo.png"
+                         Square310x310Logo="Assets\Square310x310Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#CC6701" />
+      </uap:VisualElements>
     </Application>
   </Applications>
 
@@ -81,6 +51,5 @@
     <rescap:Capability Name="runFullTrust" />
     <rescap:Capability Name="broadFileSystemAccess" />
     <rescap:Capability Name="expandedResources" />
-    <rescap:Capability Name="packageQuery" />
   </Capabilities>
 </Package>

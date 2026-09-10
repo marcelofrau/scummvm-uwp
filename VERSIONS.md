@@ -15,7 +15,7 @@ always visible in the app version.
 
 ## How the version is computed
 
-`tools/version.ps1` (wired as **PreBuildEvent** in `ScummVMLauncher.csproj`):
+`tools/version.ps1` (wired into `scripts/build.ps1`, runs before every build):
 
 1. Reads `display_version` from `cores/scummvm_libretro.info`.
 2. Normalizes to `major.minor.patch` (strips `git`).

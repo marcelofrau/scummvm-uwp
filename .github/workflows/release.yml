@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         env:
           # Release builds pin the version from the checked-out tag/commit:
-          # version.ps1 (PreBuildEvent) will NOT bump build_counter.
+          # build.ps1 only bumps build_counter when SCUMMVM_DONT_INCREMENT is not set.
           SCUMMVM_DONT_INCREMENT: 1
         run: ./scripts/build.ps1 -Configuration Release -Platform x64
 
@@ -69,7 +69,7 @@ jobs:
         run: |
           ./scripts/package.ps1 -SkipBuild -PfxPath "certs\scummvm-uwp.pfx" -PfxPassword "dev"
           $ver = "${{ steps.version.outputs.version }}"
-          # PreBuildEvent bumped the version during Build; verify against AppPackages output
+          # version.ps1 bumped the version during Build; verify against AppPackages output
           $pkgRoot = "launcher\ScummVMLauncher\AppPackages"
           $dir = Get-ChildItem $pkgRoot -Directory |
             Where-Object { $_.Name -match 'ScummVMLauncher_(\d+\.\d+\.\d+\.\d+)_x64_Test' } |

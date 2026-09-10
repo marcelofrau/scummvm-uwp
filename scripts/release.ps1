@@ -1,7 +1,7 @@
 # release.ps1 - assertive release flow.
 #
 # Guarantees: git tag v<version> == committed version files == built/signed appx version.
-# The app version auto-increments on every build (PreBuildEvent -> tools/version.ps1),
+# The app version auto-increments on every build (tools\version.ps1 via build.ps1),
 # so the version is DETERMINED BY THE BUILD, not predicted before it. Therefore:
 #
 #   1. Preflight  - working tree must be clean (all source committed).
@@ -46,11 +46,14 @@ try {
         Write-Error "Invalid version read from version.txt: '$version'"; exit 1
     }
 
-    # 4. Verify the signed appx for this version exists.
-    $appx = Join-Path $root "launcher\ScummVMLauncher\AppPackages\ScummVMLauncher_${version}_x64_Test\ScummVMLauncher_${version}_x64.appx"
-    if (-not (Test-Path $appx)) {
-        Write-Error "Appx not found for version $version : $appx"; exit 1
+    # 4. Verify the signed package for this version exists (.msix modern, .appx legacy).
+    $appxDir = Join-Path $root "launcher\ScummVMLauncher\AppPackages\ScummVMLauncher_${version}_x64_Test"
+    $appx = Get-ChildItem $appxDir -Filter "*.msix" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $appx) { $appx = Get-ChildItem $appxDir -Filter "*.appx" -ErrorAction SilentlyContinue | Select-Object -First 1 }
+    if (-not $appx) {
+        Write-Error "Package not found for version $version : $appxDir"; exit 1
     }
+    $appx = $appx.FullName
     Write-Host "Release build: $version" -ForegroundColor Cyan
 
     $tag = "v$version"

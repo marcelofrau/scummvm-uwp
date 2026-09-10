@@ -135,7 +135,7 @@ Launch (splash nativo orange, ~4s floor)
 
 | Local | Conteúdo |
 |---|---|
-| Package install dir | `ScummVMFrontend.exe`, `cores\scummvm_libretro.dll`, `system\scummvm.zip`, `Assets\` |
+| Package install dir | `ScummVMLauncher.exe`, `cores\scummvm_libretro.dll`, `system\scummvm.zip`, `Assets\` |
 | `LocalState\system\` | `scummvm.zip` extraído (~89 MB) + `scummvm.ini` + `.scummvm-ready` |
 | `LocalState\saves\` | save_directory do core |
 | `LocalState\` | logs (crash.log, scummvm-frontend.log) |

@@ -16,10 +16,32 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-# Read version AFTER build: the PreBuildEvent (tools\version.ps1) bumps it during the build.
+# Read version AFTER build: build.ps1 -> tools\version.ps1 bumps it.
 $version = (Get-Content (Join-Path $root 'version.txt')).Trim()
+
+# Generate the package deterministically. /t:Publish produces
+# AppPackages\ScummVMLauncher_<version>_x64_Test\ScummVMLauncher_<version>_x64.msix.
+$msbuild = $null
+if (Test-Path "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe") {
+    $msbuild = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
+} else {
+    $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -property installationPath
+    if (-not $vs) { Write-Error 'MSBuild not found (install VS2022+ com workload UWP).'; exit 1 }
+    $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
+}
+$proj = Join-Path $root 'launcher\ScummVMLauncher\ScummVMLauncher.vcxproj'
+& $msbuild $proj /t:Publish /nologo "/p:Configuration=$Configuration" "/p:Platform=$Platform" "/p:AppxPackageVersion=$version" "/p:PackageArchitecture=$Platform"
+if ($LASTEXITCODE -ne 0) { Write-Error 'Packaging (Publish) failed.'; exit $LASTEXITCODE }
+
 $appxDir = Join-Path $root "launcher\ScummVMLauncher\AppPackages\ScummVMLauncher_${version}_x64_Test"
-$appx = Join-Path $appxDir "ScummVMLauncher_${version}_x64.appx"
+# Modern MSBuild emits .msix; older configs emit .appx. Accept both.
+$pkg = Get-ChildItem $appxDir -Filter "*.msix" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $pkg) {
+    $pkg = Get-ChildItem $appxDir -Filter "*.appx" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+$appx = if ($pkg) { $pkg.FullName } else { Join-Path $appxDir "ScummVMLauncher_${version}_x64.msix" }
 
 if (-not (Test-Path $appx)) { Write-Error "Appx not found: $appx"; exit 1 }
 

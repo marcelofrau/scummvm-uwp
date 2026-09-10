@@ -158,7 +158,7 @@ The app version always mirrors the **shipped core**:
 - Base comes from `cores/scummvm_libretro.info` (`display_version = "2026.3.1git"`
   → `2026.3.1`), so a core upgrade is always visible in the app version.
 - The build counter is bumped on every build (`build_counter.txt`) by
-  `tools/version.ps1`, wired as a PreBuildEvent in the launcher project.
+  `tools/version.ps1`, wired into `scripts/build.ps1` (runs before every build).
 - A release is cut by tagging `v2026.3.1.<N>` — the CI builds, packages, and
   publishes it automatically.
 
@@ -245,7 +245,7 @@ scummvm-uwp/
 │   ├── scummvm/                       ← Submodule — clean upstream checkout
 │   └── retroarch/                     ← Submodule — LEGACY (removed in Fase 3)
 ├── patches/scummvm/                   0001 theme fix (essential)
-├── tools/version.ps1                  ← PreBuildEvent: sync version with the core
+├── tools/version.ps1                  ← version.ps1: sync version with the core
 ├── scripts/                           ← build / package / run / status
 ├── assets/                            ← Branding sources (splash, tiles, social preview)
 ├── docs/                              ← Architecture, implementation plan, discoveries, handoff

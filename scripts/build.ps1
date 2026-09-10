@@ -6,6 +6,13 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $sln = Join-Path $root 'scummvm-uwp.sln'
 
+# The app version auto-increments on every build (tools\version.ps1).
+# CI release builds set SCUMMVM_DONT_INCREMENT=1 to pin the version from the tag.
+# version.ps1 exits the process on failure (propagates to this script).
+if (-not $env:SCUMMVM_DONT_INCREMENT) {
+    & (Join-Path $root 'tools\version.ps1')
+}
+
 $msbuild = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe"
 if (-not (Test-Path $msbuild)) {
     $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -property installationPath

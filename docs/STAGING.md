@@ -16,7 +16,7 @@ RetroArch real). `retroarch.cfg` é código morto — o core lê config via
 ## 1. Estrutura alvo em LocalState
 
 ```
-%LOCALAPPDATA%\Packages\ScummVMFrontend_<hash>\LocalState\
+%LOCALAPPDATA%\Packages\ScummVMLauncher_<hash>\LocalState\
   system\
     scummvm\            → scummvm.zip extraído (zip já tem prefixo scummvm/)
       extra\

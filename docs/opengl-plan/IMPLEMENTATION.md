@@ -15,7 +15,7 @@ Estimativa total: **3-4 dias**. Cada fase é testável independentemente.
   - `libgallium_wgl.dll` (13.3 MB)
   - `dxil.dll` (1.5 MB)
   - `z-1.dll` (84 KB)
-- [ ] Adicionar ao `ScummVMFrontend.vcxproj` como `<Content Include="...">`
+- [ ] Adicionar ao `ScummVMLauncher.vcxproj` como `<Content Include="...">`
 - [ ] Verificar que DLLs aparecem no `.appx` após build
 - [ ] Testar: build Debug, verificar DLLs no AppPackages output
 
@@ -82,7 +82,7 @@ Log mostra `SET_HW_RENDER accepted` quando `scummvm_video_hw_acceleration=enable
   wglMakeCurrent(m_glDC, m_glContext)
   ```
 - [ ] Headers: copiar `mesa-uwp/include/GL/gl.h` + `glext.h` para
-  `launcher/ScummVMFrontend/GL/` OU definir typedefs mínimos
+  `launcher/ScummVMLauncher/GL/` OU definir typedefs mínimos
 - [ ] Deferir `CreateWindowSizeDependentResources()` até após o boot async:
   - Se `m_useGL == true` → `CreateGLContext()` (não cria D3D11 swap chain)
   - Se `m_useGL == false` → `CreateD3D11Resources()` (fluxo atual)

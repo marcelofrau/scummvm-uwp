@@ -88,7 +88,7 @@ Copiar de `mesa-uwp/include/GL/`:
 - `glext.h` — extensions
 - `wglext.h` — WGL extensions
 
-Para `launcher/ScummVMFrontend/GL/`. Incluir no vcxproj.
+Para `launcher/ScummVMLauncher/GL/`. Incluir no vcxproj.
 
 ### Opção B: typedefs mínimos
 Definir apenas o que o frontend usa diretamente:

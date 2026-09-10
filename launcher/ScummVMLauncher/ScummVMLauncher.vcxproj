@@ -22,6 +22,7 @@
     <WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
     <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
     <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
     <PackageCertificateKeyFile>..\..\certs\dosbox-uwp.pfx</PackageCertificateKeyFile>
     <PackageCertificateThumbprint>531AB7B73ABBD79AF8C30359322E3A47E291FB81</PackageCertificateThumbprint>
     <PackageCertificatePassword>dev</PackageCertificatePassword>
@@ -79,45 +80,45 @@
   </ItemDefinitionGroup>
 
   <ItemGroup>
-    <Image Include="..\ScummVMLauncher\Assets\LockScreenLogo.scale-200.png">
+    <Image Include="Assets\LockScreenLogo.scale-200.png">
       <Link>Assets\LockScreenLogo.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\SplashScreen.scale-200.png">
+    <Image Include="Assets\SplashScreen.scale-200.png">
       <Link>Assets\SplashScreen.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Square150x150Logo.scale-200.png">
+    <Image Include="Assets\Square150x150Logo.scale-200.png">
       <Link>Assets\Square150x150Logo.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Square44x44Logo.scale-200.png">
+    <Image Include="Assets\Square44x44Logo.scale-200.png">
       <Link>Assets\Square44x44Logo.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
+    <Image Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
       <Link>Assets\Square44x44Logo.targetsize-24_altform-unplated.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\StoreLogo.png">
+    <Image Include="Assets\StoreLogo.png">
       <Link>Assets\StoreLogo.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Square71x71Logo.scale-200.png">
+    <Image Include="Assets\Square71x71Logo.scale-200.png">
       <Link>Assets\Square71x71Logo.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Square310x310Logo.scale-200.png">
+    <Image Include="Assets\Square310x310Logo.scale-200.png">
       <Link>Assets\Square310x310Logo.scale-200.png</Link>
     </Image>
-    <Image Include="..\ScummVMLauncher\Assets\Wide310x150Logo.scale-200.png">
+    <Image Include="Assets\Wide310x150Logo.scale-200.png">
       <Link>Assets\Wide310x150Logo.scale-200.png</Link>
     </Image>
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\ScummVMLauncher\cores\scummvm_libretro.dll">
+    <Content Include="cores\scummvm_libretro.dll">
       <Link>cores\scummvm_libretro.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\ScummVMLauncher\cores\scummvm_libretro.info">
+    <Content Include="cores\scummvm_libretro.info">
       <Link>cores\scummvm_libretro.info</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="..\ScummVMLauncher\system\scummvm.zip">
+    <Content Include="system\scummvm.zip">
       <Link>system\scummvm.zip</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -271,4 +272,14 @@
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
+
+  <!-- AppxPackageVersion drives the package name (AppPackages\ScummVMLauncher_<ver>_x64_Test).
+       version.txt is bumped before every build by scripts\build.ps1 -> tools\version.ps1. -->
+  <Target Name="SetAppxPackageVersionFromVersionTxt"
+          BeforeTargets="_CreateAppxPackage;_BuildPackagedApp;_Package"
+          Condition="'$(AppxPackageVersion)' == ''">
+    <ReadLinesFromFile File="$(ProjectDir)..\..\version.txt">
+      <Output TaskParameter="Lines" PropertyName="AppxPackageVersion" />
+    </ReadLinesFromFile>
+  </Target>
 </Project>
