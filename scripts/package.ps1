@@ -33,15 +33,19 @@ $proj = Join-Path $root 'launcher\ScummVMLauncher\ScummVMLauncher.vcxproj'
 & $msbuild $proj /t:Publish /nologo "/p:Configuration=$Configuration" "/p:Platform=$Platform" "/p:AppxPackageVersion=$version" "/p:PackageArchitecture=$Platform"
 if ($LASTEXITCODE -ne 0) { Write-Error 'Packaging (Publish) failed.'; exit $LASTEXITCODE }
 
-$appxDir = Join-Path $root "launcher\ScummVMLauncher\AppPackages\ScummVMLauncher_${version}_x64_Test"
-# Modern MSBuild emits .msix; older configs emit .appx. Accept both.
-$pkg = Get-ChildItem $appxDir -Filter "*.msix" -ErrorAction SilentlyContinue |
+# Layout varies between VS installs: MSBuild may emit directly under
+# AppPackages\<pkg>_<ver>_..._Test OR nested under AppPackages\<Name>\<pkg>_<ver>...
+# Search recursively; prefer exact $version, newest first.
+$appxRoot = Join-Path $root "launcher\ScummVMLauncher\AppPackages"
+$pkg = Get-ChildItem $appxRoot -Recurse -Include "ScummVMLauncher_${version}_x64.msix", "ScummVMLauncher_${version}_x64.appx" -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $pkg) {
-    $pkg = Get-ChildItem $appxDir -Filter "*.appx" -ErrorAction SilentlyContinue |
+    $pkg = Get-ChildItem $appxRoot -Recurse -Filter "ScummVMLauncher_*.msix" -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
-$appx = if ($pkg) { $pkg.FullName } else { Join-Path $appxDir "ScummVMLauncher_${version}_x64.msix" }
+if (-not $pkg) { Write-Error "Appx not found under $appxRoot (version ${version})."; exit 1 }
+$appx = $pkg.FullName
+$appxDir = $pkg.DirectoryName
 
 if (-not (Test-Path $appx)) { Write-Error "Appx not found: $appx"; exit 1 }
 
@@ -56,9 +60,14 @@ Write-Host "Signing $appx ..." -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { Write-Error "Signing failed."; exit $LASTEXITCODE }
 
 # Verify the signature is present and by our cert.
-# Note: signtool verify /pa exit code fails on machines where the self-signed
-# root is not in the trust store, so verify by signer identity instead.
+# Note: signtool verify /pa writes "chain terminated in a root" to stderr when
+# the self-signed root is not in the trust store (expected) — under
+# $ErrorActionPreference=Stop that stderr line becomes a terminating error
+# BEFORE we can inspect the output, so capture with EAP temporarily relaxed.
+$oldEAP = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 $verifyOut = & $signtool verify /pa /v $appx 2>&1 | Out-String
+$ErrorActionPreference = $oldEAP
 if ($verifyOut -notmatch 'Issued to: Marcelo Frau') {
     Write-Error "Signing verification failed: expected signer 'Marcelo Frau' not found."
     exit 1
