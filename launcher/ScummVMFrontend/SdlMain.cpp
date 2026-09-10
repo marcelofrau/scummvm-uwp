@@ -20,8 +20,9 @@
 #include "LogHelper.h"
 
 // ─── XAudio2 ring buffer ────────────────────────────────────────────────
-static const int XA2_RING_FRAMES = 4096;
+static const int XA2_RING_FRAMES = 8192;
 static const int XA2_MAX_SUBMIT = 2048;
+static const int XA2_SUBMIT_BUFS = 8;
 
 struct Xa2Voice : IXAudio2VoiceCallback
 {
@@ -32,11 +33,21 @@ struct Xa2Voice : IXAudio2VoiceCallback
     size_t count = 0;
     size_t capacity = 0;
 
+    // Submit buffer pool: XAudio2 does NOT copy pAudioData on submit — the
+    // memory must stay valid until OnBufferEnd. One shared buffer gets
+    // clobbered by the next Pull while the voice is still playing it
+    // (audible distortion). Each submit gets its own slot, freed only by
+    // OnBufferEnd once the voice has retired that buffer.
+    std::vector<int16_t> submitBufs[XA2_SUBMIT_BUFS];
+    std::atomic<bool> slotInUse[XA2_SUBMIT_BUFS]{};
+
     void Init(IXAudio2* xa2, int rate)
     {
         InitializeCriticalSection(&cs);
         capacity = XA2_RING_FRAMES * 2;
         ring.resize(capacity);
+        for (int i = 0; i < XA2_SUBMIT_BUFS; i++)
+            submitBufs[i].resize(XA2_MAX_SUBMIT * 2);
 
         WAVEFORMATEX fx = {};
         fx.wFormatTag = WAVE_FORMAT_PCM;
@@ -83,7 +94,13 @@ struct Xa2Voice : IXAudio2VoiceCallback
     STDMETHOD_(void, OnVoiceProcessingPassEnd)() {}
     STDMETHOD_(void, OnStreamEnd)() {}
     STDMETHOD_(void, OnBufferStart)(void*) {}
-    STDMETHOD_(void, OnBufferEnd)(void*) {}
+    STDMETHOD_(void, OnBufferEnd)(void* pContext) {
+        if (pContext) {
+            intptr_t slot = (intptr_t)pContext;
+            if (slot >= 0 && slot < XA2_SUBMIT_BUFS)
+                slotInUse[slot].store(false);
+        }
+    }
     STDMETHOD_(void, OnLoopEnd)(void*) {}
     STDMETHOD_(void, OnVoiceError)(void*, HRESULT) {}
 };
@@ -93,6 +110,15 @@ static IXAudio2MasteringVoice* g_masterVoice = nullptr;
 static Xa2Voice g_xa2Voice;
 static int g_audioRate = 48000;
 static std::atomic<bool> g_audioThreadRunning{ false };
+
+// High-resolution monotonic timer (nanoseconds since boot) for frame pacing.
+static uint64_t QpcNs()
+{
+    LARGE_INTEGER freq, c;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (uint64_t)(((__int64)c.QuadPart * 1000000000) / freq.QuadPart);
+}
 
 // ─── Data paths (resolved via Win32 — no /ZW, no WinRT) ──────────────────
 static std::string g_systemDir;
@@ -154,6 +180,7 @@ static struct {
     unsigned int geomBaseW = 0;
     unsigned int geomBaseH = 0;
     float geomAspect = 0.0f;
+    double avFps = 60.0;             // timing.fps from SET_SYSTEM_AV_INFO
 
     std::atomic<bool> joypadState[16]{};
     std::atomic<int16_t> analogState[4]{};
@@ -291,6 +318,10 @@ static bool retro_env(unsigned cmd, void* data)
             g_core.geomAspect = av->geometry.aspect_ratio > 0.f
                 ? av->geometry.aspect_ratio
                 : (float)av->geometry.base_width / (float)av->geometry.base_height;
+            if (av->timing.fps > 1.f)
+                g_core.avFps = av->timing.fps;
+            if (av->timing.sample_rate > 0)
+                g_audioRate = (int)av->timing.sample_rate;
             spdlog::info("[sdl] SET_SYSTEM_AV_INFO: base={}x{} aspect={:.4f} fps={:.2f} rate={:.0f}",
                 av->geometry.base_width, av->geometry.base_height, g_core.geomAspect,
                 av->timing.fps, av->timing.sample_rate);
@@ -385,6 +416,9 @@ static bool retro_env(unsigned cmd, void* data)
         return false;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         if (data) *(const char**)data = g_systemDir.c_str();
+        return true;
+    case RETRO_ENVIRONMENT_GET_TARGET_REFRESH_RATE:
+        if (data) *(float*)data = (float)g_core.avFps;
         return true;
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
         if (data) *(const char**)data = g_saveDir.c_str();
@@ -547,7 +581,6 @@ static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned ind
 static void AudioPullThread()
 {
     spdlog::info("[sdl] audio pull thread started");
-    std::vector<int16_t> buf(XA2_MAX_SUBMIT * 2);
 
     while (g_audioThreadRunning.load())
     {
@@ -557,15 +590,23 @@ static void AudioPullThread()
         g_xa2Voice.voice->GetState(&state);
         if (state.BuffersQueued >= 3) { Sleep(1); continue; }
 
-        size_t frames = g_xa2Voice.Pull(buf.data(), XA2_MAX_SUBMIT);
-        if (frames > 0) {
-            XAUDIO2_BUFFER xbuf = {};
-            xbuf.AudioBytes = (UINT32)(frames * 4);
-            xbuf.pAudioData = (BYTE*)buf.data();
-            g_xa2Voice.voice->SubmitSourceBuffer(&xbuf, nullptr);
-        } else {
-            Sleep(1);
+        // Grab a free submit slot. The voice plays from the slot's memory
+        // until OnBufferEnd frees it — never reuse one that is in flight.
+        int slot = -1;
+        for (int i = 0; i < XA2_SUBMIT_BUFS; i++) {
+            if (!g_xa2Voice.slotInUse[i].load()) { slot = i; break; }
         }
+        if (slot < 0) { Sleep(1); continue; }
+
+        size_t frames = g_xa2Voice.Pull(g_xa2Voice.submitBufs[slot].data(), XA2_MAX_SUBMIT);
+        if (frames == 0) { Sleep(1); continue; }
+
+        g_xa2Voice.slotInUse[slot].store(true);
+        XAUDIO2_BUFFER xbuf = {};
+        xbuf.AudioBytes = (UINT32)(frames * 4);
+        xbuf.pAudioData = (BYTE*)g_xa2Voice.submitBufs[slot].data();
+        xbuf.pContext = (void*)(intptr_t)slot;
+        g_xa2Voice.voice->SubmitSourceBuffer(&xbuf, nullptr);
     }
     spdlog::info("[sdl] audio pull thread stopped");
 }
@@ -921,6 +962,27 @@ extern "C" int sdl_main(int argc, char* argv[])
             spdlog::info("[sdl] core requested SHUTDOWN");
             quit = true;
         }
+
+        // ─── Real-time frame pacing ──────────────────────────────────────
+        // The core mixes exactly sample_rate/frame_rate samples per retro_run.
+        // The loop MUST advance at that real-time cadence or audio production
+        // drifts from the 48kHz voice drain (overrun = dropped frames =
+        // crackle; underrun = gaps). The vsync swap only throttles when the
+        // core produces a frame, so idle GUI looping ran free.
+        static uint64_t s_nextFrameNs = 0;
+        double frameNs = 1e9 / (g_core.avFps > 1.0 ? g_core.avFps : 60.0);
+        uint64_t nowNs = QpcNs();
+        if (s_nextFrameNs == 0) s_nextFrameNs = nowNs;
+        s_nextFrameNs += (uint64_t)frameNs;
+        if (s_nextFrameNs < nowNs) {
+            // Fell behind (frame under budget is impossible to recover) —
+            // resync to now rather than spiraling.
+            s_nextFrameNs = nowNs + (uint64_t)frameNs;
+        }
+        uint64_t remain = s_nextFrameNs - nowNs;
+        if (remain > 2000000ULL)  // coarse sleep, leave ~1ms for the spinner
+            Sleep((DWORD)((remain - 1000000ULL) / 1000000ULL));
+        while (QpcNs() < s_nextFrameNs) {}
     }
 
     // Cleanup
