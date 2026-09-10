@@ -143,6 +143,12 @@ static struct {
     void (*glViewport)(int, int, int, int) = nullptr;
     void (*glClear)(unsigned int) = nullptr;
     void (*glClearColor)(float, float, float, float) = nullptr;
+    void (*glGetIntegerv)(unsigned int, int*) = nullptr;
+    void (*glGetTexParameteriv)(unsigned int, unsigned int, int*) = nullptr;
+
+    // Core filter state detected via GL probe at video_cb time.
+    // 0 = unknown / unprobed, 1 = linear (filter ON), 2 = nearest (filter OFF).
+    std::atomic<int> coreFilterLinear{ 0 };
 
     // Core-reported geometry (from SET_SYSTEM_AV_INFO / SET_GEOMETRY)
     unsigned int geomBaseW = 0;
@@ -229,7 +235,6 @@ static bool retro_env(unsigned cmd, void* data)
     switch (cmd)
     {
     case RETRO_ENVIRONMENT_SET_ROTATION:
-        spdlog::info("[sdl] SET_ROTATION rejected (false)");
         return false;
     case RETRO_ENVIRONMENT_GET_OVERSCAN:
         return false;
@@ -241,22 +246,8 @@ static bool retro_env(unsigned cmd, void* data)
         spdlog::info("[sdl] SET_PIXEL_FORMAT={}", (int)g_core.pixelFormat);
         return true;
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
-    {
-        auto desc = (const retro_input_descriptor*)data;
-        if (desc) {
-            int count = 0;
-            for (int i = 0; desc[i].description; i++) count++;
-            spdlog::info("[sdl] SET_INPUT_DESCRIPTORS: {} entries (rejected)", count);
-            for (int i = 0; i < count && i < 20; i++) {
-                spdlog::info("[sdl]   desc[{}] device={} id={} index={} desc={}",
-                    i, desc[i].device, desc[i].id, desc[i].index,
-                    desc[i].description ? desc[i].description : "?");
-            }
-        }
         return false;
-    }
     case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
-        spdlog::info("[sdl] SET_KEYBOARD_CALLBACK rejected");
         return false;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
     {
@@ -391,7 +382,6 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
-        spdlog::info("[sdl] GET_INPUT_BITMASKS queried — returning false (original)");
         return false;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         if (data) *(const char**)data = g_systemDir.c_str();
@@ -441,8 +431,6 @@ static bool retro_env(unsigned cmd, void* data)
         g_core.shutdownRequested = true;
         return true;
     default:
-        // Log all unhandled env callbacks — critical for finding differences with RetroArch
-        spdlog::info("[sdl] env cmd={} (unhandled, returning false)", cmd);
         return false;
     }
 }
@@ -470,6 +458,33 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
                     g_core.glClear(0x00004000);
                 }
 
+                // Probe the core's filter state: the core applies its own
+                // nearest/linear sampling when drawing into the FBO, and the
+                // last-bound 2D texture's MAG_FILTER reflects _currentState.
+                // Probe at video_cb time so the final blit keeps the core's
+                // result crisp (filter OFF → blit NEAREST) or smooth (filter
+                // ON → blit LINEAR) instead of re-smoothing unconditionally.
+                unsigned blitFilter = 0x2601; // GL_LINEAR default
+                if (g_core.glGetIntegerv && g_core.glGetTexParameteriv) {
+                    int tex = 0, mag = 0;
+                    g_core.glGetIntegerv(0x8069, &tex); // GL_TEXTURE_BINDING_2D
+                    if (tex != 0) {
+                        g_core.glGetTexParameteriv(0x0DE1, 0x2800, &mag); // GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER
+                        if (mag == 0x2600) { // GL_NEAREST
+                            blitFilter = 0x2600;
+                            if (g_core.coreFilterLinear.load() != 2) {
+                                g_core.coreFilterLinear.store(2);
+                                spdlog::info("[sdl] core filter = NEAREST (tex={})", tex);
+                            }
+                        } else if (g_core.coreFilterLinear.load() != 1) {
+                            g_core.coreFilterLinear.store(1);
+                            spdlog::info("[sdl] core filter = LINEAR (tex={} mag=0x{:X})", tex, mag);
+                        }
+                    } else if (g_core.coreFilterLinear.load() == 0) {
+                        spdlog::info("[sdl] filter probe: no 2D texture bound (fallback LINEAR)");
+                    }
+                }
+
                 // Compute aspect-corrected destination rect (letterbox/pillarbox, centered).
                 float aspect = g_core.geomAspect > 0.f
                     ? g_core.geomAspect
@@ -487,7 +502,7 @@ static void retro_video_cb(const void* data, unsigned w, unsigned h, size_t pitc
                 g_core.glViewport(0, 0, winW, winH);
                 g_core.glBindFramebuffer(0x8CA8, g_core.fbo);  // GL_READ_FRAMEBUFFER
                 g_core.glBindFramebuffer(0x8CA9, 0);            // GL_DRAW_FRAMEBUFFER = screen
-                g_core.glBlitFramebuffer(0, 0, (int)w, (int)h, dstX, dstY, dstX + dstW, dstY + dstH, 0x00004000, 0x2601); // GL_LINEAR
+                g_core.glBlitFramebuffer(0, 0, (int)w, (int)h, dstX, dstY, dstX + dstW, dstY + dstH, 0x00004000, blitFilter);
                 g_core.glBindFramebuffer(0x8CA9, 0);
             }
         }
@@ -508,46 +523,23 @@ static size_t retro_audio_batch_cb(const int16_t* data, size_t frames)
 }
 
 // ─── Input ──────────────────────────────────────────────────────────────
-static int s_inputPollCount = 0;
 static void retro_input_poll_cb() {
-    int n = ++s_inputPollCount;
-    // RetroArch calls this every retro_run frame
-    // Log first 5 + every 1000th
-    if (n <= 5 || n % 1000 == 0)
-        spdlog::info("[sdl] retro_input_poll #{}", n);
 }
 
 static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
 {
     if (port != 0) return 0;
 
-    static int s_inputCallCount = 0;
-    int callNum = ++s_inputCallCount;
-
     if (device == RETRO_DEVICE_ANALOG) {
-        if (index < 2 && id < 2) {
-            int16_t val = g_core.analogState[index * 2 + id].load();
-            // Log first 30 analog calls + every 500th
-            if (callNum <= 30 || callNum % 500 == 0)
-                spdlog::info("[sdl] input_state #{} ANALOG index={} id={} → {}", callNum, index, id, val);
-            return val;
-        }
+        if (index < 2 && id < 2)
+            return g_core.analogState[index * 2 + id].load();
         return 0;
     }
     if (device == RETRO_DEVICE_JOYPAD) {
-        if (id < 16) {
-            int16_t val = g_core.joypadState[id].load() ? 1 : 0;
-            // Log first 50 joypad calls (to see what device+id the core reads)
-            if (callNum <= 50 || callNum % 2000 == 0)
-                spdlog::info("[sdl] input_state #{} JOYPAD id={} → {}", callNum, id, val);
-            return val;
-        }
-        // Log unknown JOYPAD ids
-        spdlog::warn("[sdl] input_state #{} JOYPAD id={} (out of range)", callNum, id);
+        if (id < 16)
+            return g_core.joypadState[id].load() ? 1 : 0;
         return 0;
     }
-    // Log ANY unknown device type (RETRO_DEVICE_MOUSE, RETRO_DEVICE_POINTER, etc.)
-    spdlog::warn("[sdl] input_state #{} device={} index={} id={} (unhandled device)", callNum, device, index, id);
     return 0;
 }
 
@@ -704,8 +696,11 @@ extern "C" int sdl_main(int argc, char* argv[])
     g_core.glViewport = (decltype(g_core.glViewport))SDL_GL_GetProcAddress("glViewport");
     g_core.glClear = (decltype(g_core.glClear))SDL_GL_GetProcAddress("glClear");
     g_core.glClearColor = (decltype(g_core.glClearColor))SDL_GL_GetProcAddress("glClearColor");
-    spdlog::info("[sdl] GL procs cached: bindFB={} blitFB={} viewport={} clear={}",
-        (void*)g_core.glBindFramebuffer, (void*)g_core.glBlitFramebuffer, (void*)g_core.glViewport, (void*)g_core.glClear);
+    g_core.glGetIntegerv = (decltype(g_core.glGetIntegerv))SDL_GL_GetProcAddress("glGetIntegerv");
+    g_core.glGetTexParameteriv = (decltype(g_core.glGetTexParameteriv))SDL_GL_GetProcAddress("glGetTexParameteriv");
+    spdlog::info("[sdl] GL procs cached: bindFB={} blitFB={} viewport={} clear={} getInt={} getTexParam={}",
+        (void*)g_core.glBindFramebuffer, (void*)g_core.glBlitFramebuffer, (void*)g_core.glViewport, (void*)g_core.glClear,
+        (void*)g_core.glGetIntegerv, (void*)g_core.glGetTexParameteriv);
 
     // Create FBO for HW render — core renders into this, we blit to screen at window size
     {
@@ -863,22 +858,6 @@ extern "C" int sdl_main(int argc, char* argv[])
         g_core.analogState[1].store(rawLY < -32767 ? -32767 : rawLY);
         g_core.analogState[2].store(rawRX < -32767 ? -32767 : rawRX);
         g_core.analogState[3].store(rawRY < -32767 ? -32767 : rawRY);
-
-        // Analog diagnostic: dense timeline while stick outside center.
-        // Logs every 20 frames when either axis is non-zero (active),
-        // plus any change event, so the log shows the steady-state value
-        // and whether it wobbles toward 0 (deadzone jitter).
-        static int analogLogCount = 0;
-        static int16_t lastLx = 0, lastLy = 0;
-        int16_t lx = g_core.analogState[0].load();
-        int16_t ly = g_core.analogState[1].load();
-        bool changed = (lx != lastLx || ly != lastLy);
-        bool active = (lx != 0 || ly != 0);
-        if ((changed && active) || (active && (++analogLogCount % 20) == 0)) {
-            analogLogCount = 0;
-            spdlog::info("[sdl] analog L rawLX={} rawLY={} stLX={} stLY={}", rawLX, rawLY, lx, ly);
-            lastLx = lx; lastLy = ly;
-        }
     };
 
     // Main loop
