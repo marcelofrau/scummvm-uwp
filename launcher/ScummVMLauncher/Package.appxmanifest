@@ -9,7 +9,7 @@
   <Identity
     Name="ScummVMLauncher"
     Publisher="CN=Marcelo Frau"
-    Version="2026.3.1.61" />
+    Version="2026.3.1.62" />
 
   <Properties>
     <DisplayName>ScummVM UWP Launcher</DisplayName>
