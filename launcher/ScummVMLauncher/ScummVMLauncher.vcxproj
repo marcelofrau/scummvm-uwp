@@ -19,13 +19,14 @@
     <AppContainerApplication>true</AppContainerApplication>
     <ApplicationType>Windows Store</ApplicationType>
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
-    <WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
+<WindowsTargetPlatformMinVersion>10.0.17763.0</WindowsTargetPlatformMinVersion>
     <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
-    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
-    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
-    <PackageCertificateKeyFile>..\..\certs\dosbox-uwp.pfx</PackageCertificateKeyFile>
-    <PackageCertificateThumbprint>531AB7B73ABBD79AF8C30359322E3A47E291FB81</PackageCertificateThumbprint>
-    <PackageCertificatePassword>dev</PackageCertificatePassword>
+    <!-- Signing stays OFF in the project (proven CI flow, matches the legacy C# shell):
+         MSBuild emits an unsigned package; scripts\package.ps1 signs afterward with
+         the per-machine cert (local: certs\dosbox-uwp.pfx, CI: certs\scummvm-uwp.pfx).
+         GenerateAppxPackageOnBuild must stay OFF too: it made plain Build run
+         _GenerateAppxPackage and fail on CI (APPX0104 no cert file/thumbprint). -->
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
