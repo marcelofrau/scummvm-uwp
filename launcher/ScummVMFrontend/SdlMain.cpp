@@ -229,7 +229,8 @@ static bool retro_env(unsigned cmd, void* data)
     switch (cmd)
     {
     case RETRO_ENVIRONMENT_SET_ROTATION:
-        return false;
+        spdlog::info("[sdl] SET_ROTATION accepted");
+        return true;
     case RETRO_ENVIRONMENT_GET_OVERSCAN:
         return false;
     case RETRO_ENVIRONMENT_GET_CAN_DUPE:
@@ -240,9 +241,23 @@ static bool retro_env(unsigned cmd, void* data)
         spdlog::info("[sdl] SET_PIXEL_FORMAT={}", (int)g_core.pixelFormat);
         return true;
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
-        return false;
+    {
+        auto desc = (const retro_input_descriptor*)data;
+        if (desc) {
+            int count = 0;
+            for (int i = 0; desc[i].description; i++) count++;
+            spdlog::info("[sdl] SET_INPUT_DESCRIPTORS: {} entries", count);
+            for (int i = 0; i < count && i < 20; i++) {
+                spdlog::info("[sdl]   desc[{}] device={} id={} index={} desc={}",
+                    i, desc[i].device, desc[i].id, desc[i].index,
+                    desc[i].description ? desc[i].description : "?");
+            }
+        }
+        return true;
+    }
     case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
-        return false;
+        spdlog::info("[sdl] SET_KEYBOARD_CALLBACK accepted");
+        return true;
     case RETRO_ENVIRONMENT_SET_GEOMETRY:
     {
         auto geom = (retro_game_geometry*)data;
@@ -376,7 +391,8 @@ static bool retro_env(unsigned cmd, void* data)
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
         return true;
     case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
-        return false;
+        spdlog::info("[sdl] GET_INPUT_BITMASKS queried — returning true");
+        return true;
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
         if (data) *(const char**)data = g_systemDir.c_str();
         return true;
@@ -425,6 +441,8 @@ static bool retro_env(unsigned cmd, void* data)
         g_core.shutdownRequested = true;
         return true;
     default:
+        // Log all unhandled env callbacks — critical for finding differences with RetroArch
+        spdlog::info("[sdl] env cmd={} (unhandled, returning false)", cmd);
         return false;
     }
 }
@@ -490,7 +508,14 @@ static size_t retro_audio_batch_cb(const int16_t* data, size_t frames)
 }
 
 // ─── Input ──────────────────────────────────────────────────────────────
-static void retro_input_poll_cb() {}
+static int s_inputPollCount = 0;
+static void retro_input_poll_cb() {
+    int n = ++s_inputPollCount;
+    // RetroArch calls this every retro_run frame
+    // Log first 5 + every 1000th
+    if (n <= 5 || n % 1000 == 0)
+        spdlog::info("[sdl] retro_input_poll #{}", n);
+}
 
 static const int16_t JOY_DEADZONE = 8000;
 
@@ -505,14 +530,40 @@ static int16_t retro_input_state_cb(unsigned port, unsigned device, unsigned ind
 {
     if (port != 0) return 0;
 
+    static int s_inputCallCount = 0;
+    int callNum = ++s_inputCallCount;
+
     if (device == RETRO_DEVICE_ANALOG) {
-        // Analog values already have deadzone applied in PollGamepad
-        if (index < 2 && id < 2) return g_core.analogState[index * 2 + id].load();
+        if (index < 2 && id < 2) {
+            int16_t val = g_core.analogState[index * 2 + id].load();
+            // Log first 30 analog calls + every 500th
+            if (callNum <= 30 || callNum % 500 == 0)
+                spdlog::info("[sdl] input_state #{} ANALOG index={} id={} → {}", callNum, index, id, val);
+            return val;
+        }
         return 0;
     }
     if (device == RETRO_DEVICE_JOYPAD) {
-        if (id < 16) return g_core.joypadState[id].load() ? 1 : 0;
+        // RETRO_DEVICE_ID_JOYPAD_MASK = 32 — bitmask of all pressed buttons
+        if (id == 32) {
+            uint32_t mask = 0;
+            for (int i = 0; i < 16; i++)
+                if (g_core.joypadState[i].load()) mask |= (1u << i);
+            return (int16_t)mask;
+        }
+        if (id < 16) {
+            int16_t val = g_core.joypadState[id].load() ? 1 : 0;
+            // Log first 50 joypad calls (to see what device+id the core reads)
+            if (callNum <= 50 || callNum % 2000 == 0)
+                spdlog::info("[sdl] input_state #{} JOYPAD id={} → {}", callNum, id, val);
+            return val;
+        }
+        // Log unknown JOYPAD ids
+        spdlog::warn("[sdl] input_state #{} JOYPAD id={} (out of range)", callNum, id);
+        return 0;
     }
+    // Log ANY unknown device type (RETRO_DEVICE_MOUSE, RETRO_DEVICE_POINTER, etc.)
+    spdlog::warn("[sdl] input_state #{} device={} index={} id={} (unhandled device)", callNum, device, index, id);
     return 0;
 }
 
