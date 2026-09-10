@@ -765,6 +765,22 @@ extern "C" int sdl_main(int argc, char* argv[])
         g_core.analogState[1].store(apply_deadzone(rawLY));
         g_core.analogState[2].store(apply_deadzone(rawRX));
         g_core.analogState[3].store(apply_deadzone(rawRY));
+
+        // Analog diagnostic: dense timeline while stick outside center.
+        // Logs every 20 frames when either axis is non-zero (active),
+        // plus any change event, so the log shows the steady-state value
+        // and whether it wobbles toward 0 (deadzone jitter).
+        static int analogLogCount = 0;
+        static int16_t lastLx = 0, lastLy = 0;
+        int16_t lx = g_core.analogState[0].load();
+        int16_t ly = g_core.analogState[1].load();
+        bool changed = (lx != lastLx || ly != lastLy);
+        bool active = (lx != 0 || ly != 0);
+        if ((changed && active) || (active && (++analogLogCount % 20) == 0)) {
+            analogLogCount = 0;
+            spdlog::info("[sdl] analog L rawLX={} rawLY={} dzLX={} dzLY={}", rawLX, rawLY, lx, ly);
+            lastLx = lx; lastLy = ly;
+        }
     };
 
     // Main loop
