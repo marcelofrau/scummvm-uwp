@@ -16,10 +16,13 @@
 - Quit: core chama `RETRO_ENVIRONMENT_SHUTDOWN` → `CoreApplication::Exit()`.
 
 ## Startup no Xbox (LEIA antes de mexer em boot/log/threads/GL)
-- App que "funciona no F5 e fecha pelo tile": ver `docs/XBOX-TILE-LAUNCH-KILL.md`.
-  Nunca remover o VEH de ODS (`main.cpp`), o gate `IsDebuggerPresent` em
-  `LogHelper.h`, o `Activate()` antecipado nem o boot worker (`SdlMain.cpp`).
-  Toda mudança de startup deve ser validada abrindo PELO TILE, não só F5.
+- Blocker "funciona no F5 e fecha pelo tile" **RESOLVIDO e verificado no tile**
+  (2026-10-19, fix `58a476e`). Análise completa, resolução e do-not list:
+  `docs/XBOX-TILE-LAUNCH-KILL.md`.
+- Nunca remover o VEH de ODS (`main.cpp`), o gate `IsDebuggerPresent` em
+  `LogHelper.h`, o `Activate()` antecipado nem o boot worker (`SdlMain.cpp`) —
+  cada um cobre um mecanismo que só existe sem debugger.
+- Toda mudança de startup deve ser validada abrindo PELO TILE, não só F5.
 
 ## RetroArch coexistente (NUNCA interferir)
 - Usuário tem RetroArch REAL instalado no Xbox (package

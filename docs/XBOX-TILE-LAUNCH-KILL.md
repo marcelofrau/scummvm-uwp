@@ -1,6 +1,7 @@
 # Xbox tile-launch kill — "works under the VS debugger, closes from the tile"
 
-Status: **fix written, NOT yet compiled or verified on the Xbox** (2026-10-19).
+Status: **RESOLVED — verified on the Xbox, launched from the tile** (2026-10-19).
+Fix landed in `58a476e` (code) + `6de71e2` (this doc), merged to `main`.
 Owner of this doc: whoever touches app startup, logging, threading or Mesa/GL.
 Read this whole file before changing anything in `main.cpp`, `SdlMain.cpp`,
 `LogHelper.h` or the boot sequence. Older history: `DISCOVERIES.md` §17
@@ -10,10 +11,13 @@ Read this whole file before changing anything in `main.cpp`, `SdlMain.cpp`,
 
 ## 1. TL;DR
 
-- **Symptom:** the app (v2026.3.1.62, first GPU/Mesa release) starts and closes
-  right away when launched from the Xbox tile/dashboard. Launched with F5 from
-  Visual Studio it runs fine. Same symptom as `DISCOVERIES.md` §17 (August 2026,
-  software-render frontend). Commit `226d29f` fixed it then.
+- **Resolved (2026-10-19):** verified on the Xbox — launched **from the tile**,
+  the app opens, the ScummVM GUI is usable, input and audio work. The fix is
+  `58a476e` (code) + `6de71e2` (docs), merged to `main`.
+- **Symptom (pre-fix):** the app (v2026.3.1.62, first GPU/Mesa release) started
+  and closed right away when launched from the Xbox tile/dashboard. Launched
+  with F5 from Visual Studio it ran fine. Same symptom as `DISCOVERIES.md` §17
+  (August 2026, software-render frontend). Commit `226d29f` fixed it then.
 - **Why the debugger matters:** a debugger switches off at least **three**
   separate mechanisms that can kill the process. Each one alone explains the
   symptom:
@@ -158,11 +162,11 @@ confirmed.
 | 2026-08-21/22 | `4643a75`…`46ef795`…`89b8093`… | GL attempts: Mesa WGL in App, EGL, SDL thread split. Deadlocks between the D3D11 swap chain and SDL/Mesa, and WrongThreadException |
 | 2026-08-22 | `3cfc2d9` | "SDL_WinRTRunApp GL path — full lifecycle rewrite": everything in `sdl_main`, synchronous. **Both §17 protections lost here** |
 | 2026-09-10 | `48d5379` | Release v2026.3.1.62 (broken from the tile) |
-| 2026-10-19 | (uncommitted) | This fix (§5) |
+| 2026-10-19 | `58a476e` + `6de71e2` | This fix (§5) — **verified from the tile, merged to `main`** |
 
 ---
 
-## 5. What the current change does (uncommitted, uncompiled)
+## 5. The fix (landed in `58a476e`, verified from the tile)
 
 | File | Change | Covers |
 |---|---|---|
@@ -329,10 +333,47 @@ Series X with Game type, so 3.3 is already deprioritised):
   ~1024 MB, the setting did not apply to this package identity.
 - Does the Release appx contain all 7 Mesa/SDL DLLs at the package root?
 - Does a Windows PC Start-menu launch of the old v2026.3.1.62 die too? (That
-  would be a clean confirmation of 3.1.)
-- After the fix: which mechanism was it? Optional bisect, *only after* it
-  works: revert the VEH + the logger gate alone and test from the tile. Record
-  the result here. Keep all protections in the shipped code regardless.
+  would be a clean confirmation of 3.1.) — **moot now that the tile works.**
+- **Which mechanism was it?** With all three protections in place the app
+  survives from the tile, but the fix landed all three at once (exactly the
+  mistake `226d29f` made), so the culprit was never isolated. Optional bisect,
+  *only if a regression reappears*: revert the VEH + the logger gate alone and
+  test from the tile. Keep all protections in the shipped code regardless.
+
+## 10b. Resolution (2026-10-19)
+
+Verified on the Xbox, launched **from the tile** (no debugger):
+
+- The app opens and stays up; the ScummVM GUI is usable; input and audio work.
+- The fix is `58a476e` (code) + `6de71e2` (docs), fast-forward merged to `main`.
+
+**What was done to fix it** (all three, in the SDL path — see §5 for the exact
+edits):
+
+1. **ODS VEH** (`main.cpp`): `AddVectoredExceptionHandler(1, …)` registered
+   *first*, before `SDL_WinRTRunApp`, returning `EXCEPTION_CONTINUE_EXECUTION`
+   for `0x40010006/0x40010007/0x4001000A`. Vectored handlers run *before* the
+   frame-based SEH walk, so the ODS exception raised on the core's libco stack
+   (outside the TEB limits) is consumed instead of terminating the process.
+2. **Logger gate** (`LogHelper.h`): `spdlog::ods` only calls
+   `OutputDebugStringW` when `IsDebuggerPresent()`. Removes our own ODS traffic
+   on the tile (the core's `retro_log` callback runs on the coroutine).
+3. **Early activation + async boot** (`main.cpp` + `SdlMain.cpp`):
+   `WinRT_ActivateWindow()` activates the CoreWindow as the first thing in
+   `sdl_main` (SDL would only do it on the first event pump, after the whole
+   boot); the non-GL boot work (zip staging, data paths, 125 MB core DLL load)
+   moved to `BootWorker()` on `std::async`, while the UI thread pumps events and
+   `PresentBlank()`s black frames. GL stays on the UI thread.
+
+**Lessons — do not repeat these:**
+
+- The regression happened because `3cfc2d9` replaced the lifecycle without
+  re-checking §17. Whenever the launch path changes, re-verify from the tile.
+- Do not ship a fix that bundles several independent protections with no way to
+  tell which one mattered (as `226d29f` did). Ideally each fix is bisectable.
+- `scripts/build.ps1` bumps the app version on every build, which forces the
+  76 MB zip re-extraction on the next launch and changes boot timing. Use
+  `SCUMMVM_DONT_INCREMENT=1` for test builds.
 
 ## 11. Sources
 

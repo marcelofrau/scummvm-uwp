@@ -5,13 +5,14 @@ Last updated: 2026-08-14. For the next agent/session. Read this +
 `DISCOVERIES.md` + `FILESYSTEM.md` + `patches/scummvm/README.md` first.
 Conversation language: Portuguese. Docs: English (execution notes may be PT).
 
-## ⚠ Open blocker (2026-10-19)
+## ✅ Resolved blocker (2026-10-19)
 
-v2026.3.1.62 closes immediately when launched from the Xbox tile (works
-under F5). Fix written, not yet verified. **Read `docs/XBOX-TILE-LAUNCH-KILL.md`
-before touching startup, logging, threading or GL code.** Note: parts of this
-file predate the GPU path (`SdlMain.cpp`, SDL2 + Mesa, `SET_HW_RENDER`
-accepted); the doc above describes the current launch path.
+v2026.3.1.62 closed immediately when launched from the Xbox tile (worked under
+F5). **Fixed and verified from the tile** — fix `58a476e` + docs `6de71e2`,
+merged to `main`. Root cause, resolution and do-not list:
+`docs/XBOX-TILE-LAUNCH-KILL.md`. Note: parts of this file predate the GPU path
+(`SdlMain.cpp`, SDL2 + Mesa, `SET_HW_RENDER` accepted); the doc above describes
+the current launch path.
 
 ## Where we are
 

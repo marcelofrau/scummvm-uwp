@@ -907,7 +907,7 @@ boot **and** a VEH that consumes OutputDebugString exceptions. Both lived in
 - Third debugger-only difference: Xbox "App"-type packages are capped at 1 GB,
   not enforced under the debugger.
 
-**Fix (uncommitted, uncompiled as of 2026-10-19).**
+**Fix (landed, verified from the tile — `58a476e` + `6de71e2`, merged to `main`).**
 - `main.cpp`: ODS-consuming VEH registered first, before `SDL_WinRTRunApp`;
   `WinRT_ActivateWindow()` bridge; `WinRT_LogMemory()` (`[mem]` lines).
 - `LogHelper.h`: `OutputDebugStringW` only when `IsDebuggerPresent()`.
@@ -915,4 +915,9 @@ boot **and** a VEH that consumes OutputDebugString exceptions. Both lived in
   UI thread pumps + presents black frames meanwhile; GL stages stay on the UI
   thread; `BootTrace` stage markers.
 
-**Status.** Pending Xbox verification — see `XBOX-TILE-LAUNCH-KILL.md` §6/§7.
+**Resolution (2026-10-19).** Verified on the Xbox launched **from the tile**
+(no debugger): the app opens and stays up, the ScummVM GUI is usable, input and
+audio work. The three protections above are what restore survival; because they
+landed together the single culprit was not isolated (same trap `226d29f` fell
+into — prefer bisectable fixes). Full analysis and do-not list:
+`docs/XBOX-TILE-LAUNCH-KILL.md`.
