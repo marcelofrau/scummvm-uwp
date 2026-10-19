@@ -19,6 +19,70 @@ extern "C" bool Bootstrap_Run()
     return Bootstrap::Run();
 }
 
+// Bridge: SDL2/WinRT only calls CoreWindow::Activate() from its Activated
+// handler, which fires on the first event pump — i.e. after the whole boot.
+// Without a debugger the Xbox PLM kills an app whose window is not activated
+// in time (DISCOVERIES §18), so sdl_main activates the window up front.
+extern "C" void WinRT_ActivateWindow()
+{
+    try
+    {
+        auto window = Windows::UI::Core::CoreWindow::GetForCurrentThread();
+        if (window)
+        {
+            window->Activate();
+            BootTrace(L"CoreWindow activated");
+        }
+        else
+        {
+            BootTrace(L"CoreWindow activate: no window on this thread");
+        }
+    }
+    catch (...)
+    {
+        BootTrace(L"CoreWindow activate: exception");
+    }
+}
+
+// Bridge: log the app memory budget. On Xbox an "App"-type package is capped at
+// 1 GB (Game: 5 GB) and the cap is NOT enforced under the VS debugger —
+// another debugger-only difference (docs/XBOX-TILE-LAUNCH-KILL.md).
+extern "C" void WinRT_LogMemory(const char* tag)
+{
+    try
+    {
+        using Windows::System::MemoryManager;
+        unsigned long long usage = MemoryManager::AppMemoryUsage;
+        unsigned long long limit = MemoryManager::AppMemoryUsageLimit;
+        spdlog::info("[mem] {} usage={}MB limit={}MB", tag ? tag : "?",
+            (unsigned long long)(usage >> 20), (unsigned long long)(limit >> 20));
+    }
+    catch (...)
+    {
+        spdlog::warn("[mem] {} MemoryManager unavailable", tag ? tag : "?");
+    }
+}
+
+// OutputDebugString raises DBG_PRINTEXCEPTION_C/_WIDE_C. With a debugger the
+// debugger consumes it before any SEH dispatch; without one the system walks
+// the SEH frames. The core runs ScummVM (and all its GL → Mesa calls) on a
+// libco amd64 stack that is outside the TEB stack limits, so that frame walk
+// fails (EXCEPTION_STACK_INVALID) and the process dies silently — no
+// unhandled-exception filter runs. Mesa's os_log_message calls
+// OutputDebugStringA unconditionally. Vectored handlers run before the frame
+// walk, so consuming these codes here makes ODS a no-op anywhere.
+// Same codes as the proven fix in 226d29f (App.cpp, now dead code).
+static LONG NTAPI ConsumeDebugPrintException(PEXCEPTION_POINTERS ep)
+{
+    if (ep && ep->ExceptionRecord)
+    {
+        DWORD code = ep->ExceptionRecord->ExceptionCode;
+        if (code == 0x40010006 || code == 0x40010007 || code == 0x4001000A)
+            return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 static std::wstring LocalStateDir()
 {
     try
@@ -103,6 +167,18 @@ int main(Platform::Array<Platform::String^>^ args)
 
     SetUnhandledExceptionFilter(CrashFilter);
     BootTrace(L"main enter — " FRONTEND_VERSION);
+
+    // First in the chain (1) so no other VEH sees ODS exceptions first.
+    // Resolved dynamically, same as the old App.cpp (UWP partition headers).
+    typedef LONG(NTAPI* PVectHandlerFn)(PEXCEPTION_POINTERS);
+    typedef PVOID(WINAPI* PAddVectoredFn)(ULONG, PVectHandlerFn);
+    PAddVectoredFn addVeh = (PAddVectoredFn)GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "AddVectoredExceptionHandler");
+    if (addVeh && addVeh(1, ConsumeDebugPrintException))
+        BootTrace(L"VEH: ODS consumer installed");
+    else
+        BootTrace(L"VEH: ODS consumer FAILED to install");
+    BootTrace(IsDebuggerPresent() ? L"debugger: PRESENT" : L"debugger: absent");
 
     // GL mode: delegate entire lifecycle to SDL_WinRTRunApp.
     // SDL creates its own CoreWindow + IFrameworkView, calls sdl_main (in SdlMain.cpp).

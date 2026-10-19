@@ -6,6 +6,8 @@
 #include <xaudio2.h>
 #include <appmodel.h>
 #include <atomic>
+#include <chrono>
+#include <future>
 #include <thread>
 #include <vector>
 #include <cstdint>
@@ -612,12 +614,20 @@ static void AudioPullThread()
 }
 
 // ─── SDL main (called by SDL_WinRTRunApp after CoreWindow creation) ─────
-// Bridge: defined in main.cpp (compiled with /ZW) calling Bootstrap::Run()
+// Bridges: defined in main.cpp (compiled with /ZW)
 extern "C" bool Bootstrap_Run();
+extern "C" void WinRT_ActivateWindow();
+extern "C" void WinRT_LogMemory(const char* tag);
 
-extern "C" int sdl_main(int argc, char* argv[])
+// Non-GL boot work: data staging (zip extraction on every new version), data
+// paths and the ~125 MB core DLL load. Runs on a worker thread so the UI
+// thread can activate the window and keep presenting frames — without a
+// debugger the Xbox PLM kills an app that stalls the UI thread at launch
+// (DISCOVERIES §17/§18). GL work stays on the UI thread (context is current there).
+static bool BootWorker()
 {
-    spdlog::info("[sdl] sdl_main entered — " FRONTEND_VERSION);
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    BootTrace(L"worker: begin");
 
     // Run Bootstrap (stages scummvm.zip, writes scummvm.ini, sets DataPaths).
     bool bootstrapped = Bootstrap_Run();
@@ -674,6 +684,37 @@ extern "C" int sdl_main(int argc, char* argv[])
     spdlog::info("[sdl] SYSTEM_DIR={}", g_systemDir);
     spdlog::info("[sdl] SAVE_DIR={}", g_saveDir);
     spdlog::info("[sdl] LIBRETRO_DIR={}", g_libretroDir);
+    BootTrace(L"worker: bootstrap + paths done");
+
+    bool ok = LoadCoreDll();
+    BootTrace(ok ? L"worker: core DLL loaded" : L"worker: core DLL FAILED");
+    CoUninitialize();
+    return ok;
+}
+
+// Clear the default framebuffer to black and present — keeps the compositor
+// fed while the boot worker runs.
+static void PresentBlank()
+{
+    if (g_core.glClear && g_core.glClearColor && g_core.glBindFramebuffer) {
+        g_core.glBindFramebuffer(0x8CA9, 0); // GL_DRAW_FRAMEBUFFER = screen
+        g_core.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        g_core.glClear(0x00004000);          // GL_COLOR_BUFFER_BIT
+    }
+    SDL_GL_SwapWindow(g_core.window);
+}
+
+extern "C" int sdl_main(int argc, char* argv[])
+{
+    spdlog::info("[sdl] sdl_main entered — " FRONTEND_VERSION);
+    BootTrace(L"sdl_main entered");
+
+    // Activate the window immediately (SDL would only do it on the first
+    // event pump, after the whole boot).
+    WinRT_ActivateWindow();
+
+    auto bootFuture = std::async(std::launch::async, BootWorker);
+    BootTrace(L"boot worker launched");
 
     // SDL Init
     SDL_SetMainReady();
@@ -727,6 +768,8 @@ extern "C" int sdl_main(int argc, char* argv[])
             _glGetString ? (const char*)_glGetString(0x1F00) : "?",
             _glGetString ? (const char*)_glGetString(0x1F01) : "?");
     }
+    BootTrace(L"GL context created");
+    WinRT_LogMemory("after GL context");
 
     // Enable vsync to pace the render loop
     SDL_GL_SetSwapInterval(1);
@@ -794,8 +837,27 @@ extern "C" int sdl_main(int argc, char* argv[])
         }
     }
 
-    // Load core DLL
-    if (!LoadCoreDll()) {
+    // Pump events + present black frames until the boot worker finishes
+    // (staging + core DLL load). Events stay queued for the main loop; only
+    // SDL_QUIT is checked here.
+    BootTrace(L"GL ready — waiting for boot worker");
+    int waitFrames = 0;
+    do {
+        SDL_PumpEvents();
+        if (SDL_HasEvent(SDL_QUIT)) {
+            spdlog::info("[sdl] quit requested during boot");
+            bootFuture.wait();
+            SDL_Quit();
+            return 0;
+        }
+        PresentBlank();
+        if (++waitFrames == 1)
+            BootTrace(L"first frame presented");
+    } while (bootFuture.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready);
+    spdlog::info("[sdl] boot worker done after {} wait frames", waitFrames);
+    WinRT_LogMemory("after core DLL load");
+
+    if (!bootFuture.get()) {
         spdlog::error("[sdl] core load FAILED");
         SDL_Quit(); // handles GL context + window teardown internally
         return 1;
@@ -813,6 +875,8 @@ extern "C" int sdl_main(int argc, char* argv[])
 
     g_core.init();
     spdlog::info("[sdl] retro_init OK");
+    BootTrace(L"retro_init done");
+    SDL_PumpEvents();
 
     // Load game (no-game = ScummVM GUI)
     spdlog::info("[sdl] calling retro_load_game(NULL) for no-game GUI");
@@ -822,6 +886,8 @@ extern "C" int sdl_main(int argc, char* argv[])
         spdlog::info("[sdl] retro_load_game OK");
         g_core.loaded = true;
     }
+    BootTrace(L"retro_load_game done");
+    WinRT_LogMemory("after retro_load_game");
     g_core.running = true;
 
     // Audio pull thread
@@ -842,6 +908,7 @@ extern "C" int sdl_main(int argc, char* argv[])
     }
 
     spdlog::info("[sdl] entering main loop");
+    BootTrace(L"entering main loop");
 
     // ─── Poll-based input (dosbox-uwp pattern) ──────────────────────
     // Snapshot joypad+analog state BEFORE each retro_run() call.
@@ -952,6 +1019,7 @@ extern "C" int sdl_main(int argc, char* argv[])
                 g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_L].load() ? "L" : "-",
                 g_core.joypadState[RETRO_DEVICE_ID_JOYPAD_R].load() ? "R" : "-");
             evCount = 0;
+            WinRT_LogMemory("main loop");
         }
 
         if (g_core.loaded && g_core.running) {

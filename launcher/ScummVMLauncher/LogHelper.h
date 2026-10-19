@@ -151,7 +151,11 @@ namespace spdlog
         if (n <= 0)
             return;
         wide[2047] = 0;
-        ::OutputDebugStringW(wide);
+        // Without a debugger ODS does nothing useful but still raises an SEH
+        // exception — fatal when raised on the core's libco stack (see the
+        // VEH in main.cpp). Only emit it when someone is listening.
+        if (::IsDebuggerPresent())
+            ::OutputDebugStringW(wide);
 
         // Mirror to a file so the same trace is readable on console devices
         // (Xbox) where a debugger/ODS is not available. Path set via
