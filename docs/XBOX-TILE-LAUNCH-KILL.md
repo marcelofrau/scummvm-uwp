@@ -375,6 +375,36 @@ edits):
   76 MB zip re-extraction on the next launch and changes boot timing. Use
   `SCUMMVM_DONT_INCREMENT=1` for test builds.
 
+## 10c. Core update after the fix (2026-10-19)
+
+The bundled core was replaced with the libretro buildbot nightly of
+**2026-10-19** (`cores/scummvm_libretro.dll`, 137.296.896 bytes) — still
+reporting `ScummVM 2026.3.1git`. See `DISCOVERIES.md` §19 for the full record.
+
+**Why this belongs in this doc.** The upstream libretro backend landed a cluster
+of fixes in the 2026-08-17…26 window that directly touch the mechanisms
+described above:
+
+- **`5f69c64d` (2026-08-19): the emu cothread stack doubles from 512 KB to
+  1 MB** (`EMU_THREAD_STACK_SIZE`) and now warns before exhaustion. The old core
+  used `co_create(65536 * sizeof(void *))` — 512 KB, no guard page — which is
+  **the primary suspect in §3.1** (Mesa/GL does far more work on that stack than
+  SW mode ever did). This is a fix at the source, not a frontend workaround.
+- `e42130a5` (2026-08-26): fix `libco check_stack_headroom`.
+- `536840e9` / `8911889a` (2026-08-20): frontend GL context handoff at thread
+  switches + WGL entry points resolved at runtime.
+- `292e4099` (2026-08-20): `context_reset` GL work deferred to the emu thread
+  (`context_reset_pending` atomic).
+
+**Implication.** The new core may make the ODS VEH (§5.1) a safety net rather
+than a crutch. **Not yet proven** — the frontend protections remain in place and
+must stay (see §8). A future bisect could reveal whether the 1 MB stack alone
+survives on the tile; until then, all three protections stay.
+
+Verification that the new binary really carries the bigger stack: string check
+for `Emulation stack at` and `libco stacks have no guard page` — present in the
+2026-10-19 DLL, absent in the 2026-08-03 one.
+
 ## 11. Sources
 
 - SDL2 WinRT app: <https://github.com/libsdl-org/SDL/blob/SDL2/src/core/winrt/SDL_winrtapp_direct3d.cpp>

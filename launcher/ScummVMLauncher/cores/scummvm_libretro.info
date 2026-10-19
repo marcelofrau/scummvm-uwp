@@ -1,3 +1,8 @@
+# Core binary source: libretro buildbot nightly (windows x86_64)
+# Retrieved: 2026-10-19  |  Size: 137296896 bytes  |  Reports: ScummVM 2026.3.1git
+# NOTE: display_version below drives the app version (tools/version.ps1).
+#       The buildbot builds from the frozen 2026.3.x line, NOT master,
+#       so this stays "2026.3.1git" even for much newer nightly binaries.
 # Software Information
 display_name = "ScummVM"
 authors = "ScummVM Team"

@@ -1,6 +1,6 @@
 # DISCOVERIES — what we found and what we did to get ScummVM running
 
-Status: **active log**. Last updated: 2026-08-08.
+Status: **active log**. Last updated: 2026-10-19.
 
 This is a chronological log of the problems we hit while bringing ScummVM to
 Xbox/UWP, the root causes we found in the RetroArch and ScummVM source, and the
@@ -921,3 +921,59 @@ audio work. The three protections above are what restore survival; because they
 landed together the single culprit was not isolated (same trap `226d29f` fell
 into — prefer bisectable fixes). Full analysis and do-not list:
 `docs/XBOX-TILE-LAUNCH-KILL.md`.
+
+## 19. Core update: buildbot nightly 2026-10-19 (2026.3.1git)
+
+**What changed.** The bundled `cores/scummvm_libretro.dll` was replaced with the
+libretro buildbot nightly from **2026-10-19** (137.296.896 bytes, released the
+2026-08-03 binary of 124.831.232 bytes — ~2.5 months of upstream commits).
+The core still reports **`ScummVM 2026.3.1git`**, so the app base version is
+unchanged. Old binary kept as `cores-backup/scummvm_libretro.dll.bak-20260803`
+(gitignored) for rollback.
+
+**Why it matters for the tile bug (§18).** The upstream libretro backend landed
+a cluster of fixes in the 2026-08-17…26 window that touch exactly our failure
+area:
+
+| Commit | Date | Effect |
+|---|---|---|
+| `5f69c64d` | 2026-08-19 | emu cothread stack **512 KB → 1 MB** (`EMU_THREAD_STACK_SIZE`) + low-margin warning |
+| `e42130a5` | 2026-08-26 | fix `libco check_stack_headroom` |
+| `536840e9` | 2026-08-20 | hand frontend GL context over at thread switches |
+| `8911889a` | 2026-08-20 | resolve WGL entry points at runtime during GL handoff |
+| `292e4099` | 2026-08-20 | defer `context_reset`'s GL work to the emulation thread (`context_reset_pending` atomic) |
+| `93537854` | 2026-08-17 | fix `GET_AUDIO_VIDEO_ENABLE` handling per libretro API contract |
+
+The old core created the cothread with `co_create(65536 * sizeof(void *))`
+(**512 KB**) and no guard page — the primary suspect in §18 (Mesa/GL doing far
+more work on that stack than SW mode ever did). The new core doubles the stack
+to **1 MB** and warns before exhaustion. Verified by string check: the new DLL
+contains `Emulation stack at` and `libco stacks have no guard page`; the old one
+does not.
+
+**Version semantics (do not confuse).** The buildbot does **not** build from
+ScummVM master — it builds from the **frozen 2026.3.x line**. Evidence: the
+2026-10-19 binary reports `2026.3.1git`, while ScummVM master already reports
+`2026.4.1git` (bumped 2026-10-10). The build **date** therefore never appears in
+the version string; `2026.3.1git` means "after release 2026.3.0, before
+2026.4.0". Recorded as a comment in `cores/scummvm_libretro.info`.
+
+**Frontend compatibility (checked, no code change needed).**
+
+- `scummvm_video_hw_acceleration`: the core declares default `enabled` (built
+  with `USE_OPENGL`), our env handler answers from the stored
+  `SET_CORE_OPTIONS_V2*` map → GL path stays on. The hardcoded `"enabled"`
+  fallback in `SdlMain.cpp` is never reached.
+- New core options (`scummvm_browsing_mode`, etc.) are answered automatically
+  because the env handler stores every declared default and answers
+  `GET_VARIABLE` from that map — no per-option table to maintain.
+- Toolchain unchanged in kind: MinGW GCC 16.2.0.
+
+**Open risk to watch.** `system/scummvm.zip` (datafiles + patched themes) is
+from 2026-08-08; the libretro README states datafiles/themes must be consistent
+with the core version. Same base version (2026.3.1) suggests it stays
+compatible, but watch the core log for datafile inconsistency warnings on the
+next tile run.
+
+**Also:** `.info` now carries a provenance header (source, retrieval date, byte
+size, reported version) — see the top of `cores/scummvm_libretro.info`.

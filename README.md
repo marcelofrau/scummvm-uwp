@@ -24,15 +24,17 @@ Kyrandia, Simon the Sorcerer…), built for **Windows 11** and **Xbox Series
 (Dev Mode)**.
 
 The app **is** a libretro frontend. A single executable
-(`ScummVMLauncher.exe`, C++/CoreWindow) loads the **official ScummVM libretro
-core** (`scummvm_libretro.dll`, the same binary RetroArch ships — maintained by
-the ScummVM team) directly and renders ScummVM's **own launcher GUI and full
-options** on screen: gamepad-driven, no external menu, no RetroArch, no second
-app, no protocol handoff.
+(`ScummVMLauncher.exe`, C++/CoreWindow, hosted by `SDL_WinRTRunApp`) loads the
+**official ScummVM libretro core** (`scummvm_libretro.dll`, the same binary
+RetroArch ships — maintained by the ScummVM team) directly and renders
+ScummVM's **own launcher GUI and full options** on screen: gamepad-driven, no
+external menu, no RetroArch, no second app, no protocol handoff.
 
-The frontend provides what a core needs — video (D2D/D3D11, RGB565→BGRA8888),
-audio (XAudio2), gamepad/keyboard/mouse input, and filesystem access
-(`runFullTrust` + FromApp VFS) — all in one process.
+The frontend provides what a core needs — video (OpenGL via Mesa WGL, with a
+software RGB565→BGRA8888 fallback), audio (XAudio2), gamepad/keyboard/mouse
+input, and filesystem access (`runFullTrust` + FromApp VFS) — all in one
+process. Rendering runs on a dedicated render thread while the core thread
+executes the emulator, sharing the GL context.
 
 ---
 
@@ -135,17 +137,20 @@ behavior options.
 | Feature | Status |
 |---------|--------|
 | ScummVM core (official libretro buildbot binary, no recompile) | ✅ Shipped |
-| Own libretro frontend (single app, one process, no RetroArch) | 🚧 In progress |
+| Own libretro frontend (single app, one process, no RetroArch) | ✅ Works on Xbox |
 | ScummVM's own GUI + options (gamepad-driven) | ✅ Works |
-| Clean quit to dashboard (`RETRO_ENVIRONMENT_SHUTDOWN`) | 🚧 In progress |
+| OpenGL rendering via Mesa WGL (shared FBO, thread split) | ✅ Works |
+| Software (RGB565→BGRA8888) fallback path | ✅ Present |
+| Clean quit to dashboard (`RETRO_ENVIRONMENT_SHUTDOWN`) | ✅ Works |
 | Data files + patched themes bundled (`system/scummvm.zip`, versioned) | ✅ Done |
 | Game Options (Misc tab) crash — fixed (theme version skew) | ✅ Done |
 | `gui_scale=150`, English UI, orange `#CC6701` branding | ✅ Done |
 | Xbox deploy via Device Portal (coexists with real RetroArch) | ✅ Done |
+| Boot **from the tile** (survives the PLM watchdog) | ✅ Done |
 | Self-signed packaging + GitHub Releases CI (`v*` tag) | ✅ Done |
 | Automatic version sync with the bundled core | ✅ Done |
 | Filesystem: `runFullTrust` + FromApp VFS (sandbox) | ✅ Done |
-| E: staging (data) + LocalState fallback | 🚧 In progress |
+| Bootstrap staging + LocalState fallback | ✅ Done |
 
 ---
 

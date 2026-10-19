@@ -90,3 +90,6 @@ session.txt
 .cortexkit/
 docs/snapshots/
 
+
+# Backup local do core DLL (fora do pacote, nao versionado)
+cores-backup/
