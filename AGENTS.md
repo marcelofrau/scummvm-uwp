@@ -15,6 +15,12 @@
   de frame. Sample rate do core define o formato do XAudio2.
 - Quit: core chama `RETRO_ENVIRONMENT_SHUTDOWN` → `CoreApplication::Exit()`.
 
+## Startup no Xbox (LEIA antes de mexer em boot/log/threads/GL)
+- App que "funciona no F5 e fecha pelo tile": ver `docs/XBOX-TILE-LAUNCH-KILL.md`.
+  Nunca remover o VEH de ODS (`main.cpp`), o gate `IsDebuggerPresent` em
+  `LogHelper.h`, o `Activate()` antecipado nem o boot worker (`SdlMain.cpp`).
+  Toda mudança de startup deve ser validada abrindo PELO TILE, não só F5.
+
 ## RetroArch coexistente (NUNCA interferir)
 - Usuário tem RetroArch REAL instalado no Xbox (package
   `1e4cf179-f3c2-404f-b9f3-cb2070a5aad8`, v1.22.2.0).

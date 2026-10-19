@@ -882,3 +882,37 @@ before suspension. When the OS kills you, there's no event to defer.
 **Conclusion:** H-Struct-B (missing OnSuspending deferral) is **ruled out**.
 The remaining hypothesis is H-Struct-A (activation watchdog timing) or
 H-Struct-B2 (OutputDebugString without debugger).
+
+## 18. GPU path regression — tile launch dies again (SDL_WinRTRunApp)
+
+**Full analysis, test procedure, decision tree and do-not list:
+`docs/XBOX-TILE-LAUNCH-KILL.md`. Read it before touching startup code.**
+
+**Symptom.** v2026.3.1.62 (first GL/Mesa release) opens and closes right away
+when launched from the Xbox tile; under the VS debugger (F5) it runs fine. Same
+signature as §17.
+
+**Cause (regression).** `226d29f` fixed §17 with two changes at once — async
+boot **and** a VEH that consumes OutputDebugString exceptions. Both lived in
+`App.cpp`/`ScummVMMain.cpp`. The GL rewrite `3cfc2d9` moved the lifecycle to
+`SDL_WinRTRunApp(sdl_main)`, making that code dead and losing both:
+
+- `sdl_main` runs on the UI thread and did the whole boot (zip staging, Mesa GL,
+  125 MB core DLL, `retro_init`, `retro_load_game`) before the first event pump;
+  SDL2 only calls `CoreWindow::Activate()` on that pump.
+- No ODS VEH any more, while GPU mode puts Mesa (which calls
+  `OutputDebugStringA` unconditionally) on the core's libco `amd64.c` stack.
+  That stack is outside the TEB stack limits, so the SEH dispatch for the
+  ODS exception fails silently — only when no debugger is attached.
+- Third debugger-only difference: Xbox "App"-type packages are capped at 1 GB,
+  not enforced under the debugger.
+
+**Fix (uncommitted, uncompiled as of 2026-10-19).**
+- `main.cpp`: ODS-consuming VEH registered first, before `SDL_WinRTRunApp`;
+  `WinRT_ActivateWindow()` bridge; `WinRT_LogMemory()` (`[mem]` lines).
+- `LogHelper.h`: `OutputDebugStringW` only when `IsDebuggerPresent()`.
+- `SdlMain.cpp`: `BootWorker()` (Bootstrap + paths + core DLL) on `std::async`,
+  UI thread pumps + presents black frames meanwhile; GL stages stay on the UI
+  thread; `BootTrace` stage markers.
+
+**Status.** Pending Xbox verification — see `XBOX-TILE-LAUNCH-KILL.md` §6/§7.
